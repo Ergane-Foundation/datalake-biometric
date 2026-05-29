@@ -1,4 +1,4 @@
-#import "DatalakeBiometric.h"
+﻿#import "DatalakeBiometric.h"
 
 @implementation DatalakeBiometric
 - (NSNumber *)multiply:(double)a b:(double)b {

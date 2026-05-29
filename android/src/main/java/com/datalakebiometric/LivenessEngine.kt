@@ -1,6 +1,5 @@
-package com.datalakebiometric
+﻿package com.datalakebiometric
 
-import com.facebook.react.bridge.ReadableArray
 import kotlin.math.sqrt
 
 class LivenessEngine {
@@ -21,11 +20,9 @@ class LivenessEngine {
         val avgEar: Float
     )
 
-    fun evaluate(landmarksArray: ReadableArray): LivenessResult {
-        val landmarks = parseLandmarks(landmarksArray)
-
+    fun evaluate(landmarks: Array<FloatArray>): Array<Any?> {
         if (landmarks.size < 468) {
-            return LivenessResult(isLive = false, isBlink = false, blinkCount = 0, avgEar = 0f)
+            return arrayOf(false, false, 0, 0f)
         }
 
         val earLeft = computeEAR(landmarks, leftEye)
@@ -43,24 +40,7 @@ class LivenessEngine {
         val earVariance = computeVariance(earHistory)
         val isLive = blinkCount >= 2 && earVariance > 0.0005f
 
-        return LivenessResult(
-            isLive = isLive,
-            isBlink = isBlink,
-            blinkCount = blinkCount,
-            avgEar = avgEAR
-        )
-    }
-
-    private fun parseLandmarks(landmarksArray: ReadableArray): Array<FloatArray> {
-        val size = landmarksArray.size()
-        return Array(size) { i ->
-            val map = landmarksArray.getMap(i)
-            floatArrayOf(
-                map.getDouble("x").toFloat(),
-                map.getDouble("y").toFloat(),
-                map.getDouble("z").toFloat()
-            )
-        }
+        return arrayOf(isLive, isBlink, blinkCount, avgEAR)
     }
 
     private fun computeEAR(landmarks: Array<FloatArray>, indices: List<Int>): Float {

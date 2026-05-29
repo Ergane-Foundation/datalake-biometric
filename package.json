@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "datalake-biometric",
   "version": "0.1.0",
   "description": "Offline facial recognition and liveness detection for React Native",

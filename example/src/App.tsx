@@ -1,12 +1,10 @@
 import { Text, View, StyleSheet } from 'react-native';
-import { multiply } from 'datalake-biometric';
-
-const result = multiply(3, 7);
+import { BiometricSDK } from 'datalake-biometric';
 
 export default function App() {
   return (
     <View style={styles.container}>
-      <Text>Result: {result}</Text>
+      <Text>Biometric SDK initialized</Text>
     </View>
   );
 }

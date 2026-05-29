@@ -1,4 +1,4 @@
-name: 🐛 Bug report
+﻿name: ðŸ› Bug report
 description: Report a reproducible bug or regression in this library.
 labels: [bug]
 body:
@@ -7,9 +7,9 @@ body:
       value: |
         # Bug report
 
-        👋 Hi!
+        ðŸ‘‹ Hi!
 
-        **Please fill the following carefully before opening a new issue ❗**
+        **Please fill the following carefully before opening a new issue â—**
         *(Your issue may be closed if it doesn't provide the required pieces of information)*
   - type: checkboxes
     attributes:
@@ -54,8 +54,8 @@ body:
       description: |
         You must provide a clear list of steps and code to reproduce the problem.
       value: |
-        1. …
-        2. …
+        1. â€¦
+        2. â€¦
     validations:
       required: true
   - type: input

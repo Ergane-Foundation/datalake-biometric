@@ -1,4 +1,4 @@
-package datalakebiometric.example
+﻿package datalakebiometric.example
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

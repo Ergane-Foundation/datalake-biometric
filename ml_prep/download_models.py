@@ -1,4 +1,4 @@
-"""
+﻿"""
 Download TFLite models required by datalake-biometric into
 android/src/main/assets/models/.
 

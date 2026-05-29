@@ -1,4 +1,4 @@
-package com.datalakebiometric
+﻿package com.datalakebiometric
 
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule

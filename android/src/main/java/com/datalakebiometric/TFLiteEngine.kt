@@ -1,4 +1,4 @@
-package com.datalakebiometric
+﻿package com.datalakebiometric
 
 import android.content.res.AssetManager
 import android.graphics.Bitmap
@@ -116,7 +116,7 @@ class TFLiteEngine(private val assetManager: AssetManager) {
 
         val meanBrightness = totalBrightness / (width * height)
         val exposureScore = if (meanBrightness < 40 || meanBrightness > 220) 0.2f
-        else 1.0f - abs(meanBrightness - 130) / 130f
+        else (1.0f - (abs(meanBrightness - 130.0) / 130.0).toFloat())
 
         val laplacianVariance = if (laplacianValues.isEmpty()) 0.0
         else laplacianValues.average()
@@ -127,10 +127,10 @@ class TFLiteEngine(private val assetManager: AssetManager) {
     }
 
     private fun luma(pixel: Int): Double {
-        val r = (pixel shr 16) and 0xFF
-        val g = (pixel shr 8) and 0xFF
-        val b = pixel and 0xFF
-        return 0.299 * r + 0.587 * g + 0.114 * b
+        val r = ((pixel shr 16) and 0xFF).toDouble()
+        val g = ((pixel shr 8) and 0xFF).toDouble()
+        val b = (pixel and 0xFF).toDouble()
+        return 0.299.toDouble() * r + 0.587.toDouble() * g + 0.114.toDouble() * b
     }
 
     private fun bitmapToBuffer(bitmap: Bitmap, width: Int, height: Int): ByteBuffer {

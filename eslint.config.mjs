@@ -1,4 +1,4 @@
-import { fixupConfigRules } from '@eslint/compat';
+﻿import { fixupConfigRules } from '@eslint/compat';
 import { FlatCompat } from '@eslint/eslintrc';
 import js from '@eslint/js';
 import prettier from 'eslint-plugin-prettier';

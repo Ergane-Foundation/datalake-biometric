@@ -1,4 +1,4 @@
-"""
+﻿"""
 Verify TFLite models in android/src/main/assets/models/ by running a dummy
 inference and reporting input/output shapes, dtype, and inference time.
 
@@ -42,12 +42,12 @@ def dtype_name(detail: dict) -> str:
 
 
 def verify_model(model_path: Path, label: str) -> bool:
-    print(f"\n{'─' * 60}")
+    print(f"\n{'â”€' * 60}")
     print(f"Model : {label}")
     print(f"File  : {model_path.name}")
 
     if not model_path.exists():
-        print(f"Status: {SKIP}  (file not found — skipping)")
+        print(f"Status: {SKIP}  (file not found â€” skipping)")
         return True  # not a failure; file simply hasn't been downloaded yet
 
     try:
@@ -108,9 +108,9 @@ def main() -> None:
         ok = verify_model(path, model["label"])
         results[model["filename"]] = ok
 
-    print(f"\n{'═' * 60}")
+    print(f"\n{'â•' * 60}")
     print("Summary")
-    print(f"{'═' * 60}")
+    print(f"{'â•' * 60}")
 
     all_present_passed = True
     for model in MODELS:

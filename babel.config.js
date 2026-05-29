@@ -1,4 +1,4 @@
-module.exports = {
+﻿module.exports = {
   overrides: [
     {
       exclude: /\/node_modules\//,

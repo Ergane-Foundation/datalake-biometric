@@ -1,4 +1,4 @@
-# datalake-biometric
+﻿# datalake-biometric
 
 Offline facial recognition and liveness detection for React Native
 

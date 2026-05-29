@@ -1,4 +1,4 @@
-#import <DatalakeBiometricSpec/DatalakeBiometricSpec.h>
+﻿#import <DatalakeBiometricSpec/DatalakeBiometricSpec.h>
 
 @interface DatalakeBiometric : NSObject <NativeDatalakeBiometricSpec>
 

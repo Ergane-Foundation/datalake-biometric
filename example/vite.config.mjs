@@ -1,4 +1,4 @@
-import { defineConfig, mergeConfig } from 'vite';
+﻿import { defineConfig, mergeConfig } from 'vite';
 
 import config from 'react-native-builder-bob/vite-config';
 import pack from '../package.json' with { type: 'json' };
