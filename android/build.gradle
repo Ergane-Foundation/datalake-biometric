@@ -1,4 +1,4 @@
-﻿buildscript {
+buildscript {
   ext.DatalakeBiometric = [
     kotlinVersion: "2.0.21",
     minSdkVersion: 24,

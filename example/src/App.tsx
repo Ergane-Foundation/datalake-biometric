@@ -1,5 +1,4 @@
 import { Text, View, StyleSheet } from 'react-native';
-import { BiometricSDK } from 'datalake-biometric';
 
 export default function App() {
   return (
