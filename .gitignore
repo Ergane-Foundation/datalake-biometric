@@ -84,3 +84,6 @@ android/generated
 
 # React Native Nitro Modules
 nitrogen/
+
+# Kotlin incremental compiler cache (per-module under android/)
+.kotlin/

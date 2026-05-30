@@ -7,10 +7,14 @@ export interface Spec extends TurboModule {
 
   enrollWorker(
     workerId: string,
-    base64Frames: Array<string>
+    base64Frames: Array<string>,
+    hint?: { nx: number; ny: number; nw: number; nh: number }
   ): Promise<{ success: boolean; framesUsed: number }>;
 
-  verifyWorker(base64Image: string): Promise<{
+  verifyWorker(
+    base64Image: string,
+    hint?: { nx: number; ny: number; nw: number; nh: number }
+  ): Promise<{
     status: string;
     workerId?: string;
     confidence?: number;

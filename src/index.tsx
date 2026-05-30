@@ -53,17 +53,25 @@ export const BiometricSDK = {
     return DatalakeBiometric.initialize();
   },
 
-  /** Enrols a worker by averaging embeddings from multiple base64-encoded JPEG frames. */
+  /** Enrols a worker by averaging embeddings from multiple base64-encoded JPEG frames.
+   *  Pass `hint` (normalized 0..1 face box from MLKit) for a tight crop; omit for
+   *  the native center-biased fallback. */
   enrollWorker(
     workerId: string,
-    base64Frames: string[]
+    base64Frames: string[],
+    hint?: { nx: number; ny: number; nw: number; nh: number }
   ): Promise<EnrollResult> {
-    return DatalakeBiometric.enrollWorker(workerId, base64Frames);
+    return DatalakeBiometric.enrollWorker(workerId, base64Frames, hint);
   },
 
-  /** Runs face detection, liveness check, and 1-N matching against enrolled workers. */
-  verifyWorker(base64Image: string): Promise<VerifyResult> {
-    return DatalakeBiometric.verifyWorker(base64Image);
+  /** Runs face detection, liveness check, and 1-N matching against enrolled workers.
+   *  Pass `hint` (normalized 0..1 face box from MLKit) for a tight crop; omit for
+   *  the native center-biased fallback. */
+  verifyWorker(
+    base64Image: string,
+    hint?: { nx: number; ny: number; nw: number; nh: number }
+  ): Promise<VerifyResult> {
+    return DatalakeBiometric.verifyWorker(base64Image, hint);
   },
 
   /** Evaluates MediaPipe face-mesh landmarks and returns blink/liveness state. */

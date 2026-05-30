@@ -7,6 +7,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableArray
+import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.bridge.WritableNativeArray
@@ -36,8 +37,10 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
   @ReactMethod
   override fun initialize(promise: Promise) {
     try {
-      // Engines initialized in constructor
-      embeddingStore?.writableDatabase?.close() // Force DB initialization
+      // Engines are initialized in the constructor; this just forces the
+      // SQLCipher DB to open (and triggers Keystore key derivation) so the
+      // first enrolment doesn't pay that cost.
+      embeddingStore?.ensureOpen()
       promise.resolve(true)
     } catch (e: Exception) {
       promise.reject("INIT_ERROR", e.message, e)
@@ -48,37 +51,45 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
   override fun enrollWorker(
     workerId: String,
     base64Frames: ReadableArray,
+    hint: ReadableMap?,
     promise: Promise
   ) {
     try {
+      val faceHint = readFaceHint(hint)
       var successCount = 0
       val embeddings = mutableListOf<FloatArray>()
 
       for (i in 0 until base64Frames.size()) {
         val base64 = base64Frames.getString(i) ?: continue
-        val bitmap = decodeBase64ToBitmap(base64)
-        if (bitmap != null) {
-          val embedding = tfliteEngine?.embed(bitmap)
+        val raw = decodeBase64ToBitmap(base64) ?: continue
+        // Cap working resolution so scoreQuality / detect / embed don't try to
+        // chew through 12 MP per frame. 720 long-side keeps the face at ~300 px.
+        val working = downscaleForProcessing(raw)
+        // MLKit hint (if JS provided one) gives a tight face box; otherwise we
+        // fall back to the center-biased heuristic inside detectAndCrop.
+        val faceCrop = tfliteEngine?.detectAndCrop(working, faceHint)
+        working.recycle()
+        if (faceCrop != null) {
+          val embedding = tfliteEngine?.embed(faceCrop)
+          faceCrop.recycle()
           if (embedding != null) {
             embeddings.add(embedding)
             successCount++
           }
-          bitmap.recycle()
         }
       }
 
       if (successCount > 0) {
-        // Average embeddings
         val avgEmbedding = averageEmbeddings(embeddings)
         embeddingStore?.save(workerId, avgEmbedding)
-        
+
         val result = WritableNativeMap().apply {
           putBoolean("success", true)
           putInt("framesUsed", successCount)
         }
         promise.resolve(result)
       } else {
-        promise.reject("ENROLL_FAILED", "No valid frames to enroll")
+        promise.reject("ENROLL_FAILED", "No face detected in any of the captured frames")
       }
     } catch (e: Exception) {
       promise.reject("ENROLL_ERROR", e.message, e)
@@ -86,23 +97,25 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  override fun verifyWorker(base64Image: String, promise: Promise) {
+  override fun verifyWorker(base64Image: String, hint: ReadableMap?, promise: Promise) {
+    val startMs = System.currentTimeMillis()
     try {
-      val bitmap = decodeBase64ToBitmap(base64Image)
-      if (bitmap == null) {
+      val raw = decodeBase64ToBitmap(base64Image)
+      if (raw == null) {
         val result = WritableNativeMap().apply {
           putString("status", "NO_FACE")
+          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
         }
         promise.resolve(result)
         return
       }
+      // Cap the working bitmap before any per-pixel work runs.
+      val working = downscaleForProcessing(raw)
 
-      val startMs = System.currentTimeMillis()
-      
-      // Check quality
-      val quality = tfliteEngine?.scoreQuality(bitmap) ?: 0f
+      // Quick blur/exposure gate (runs on the downscaled frame)
+      val quality = tfliteEngine?.scoreQuality(working) ?: 0f
       if (quality < 0.5f) {
-        bitmap.recycle()
+        working.recycle()
         val result = WritableNativeMap().apply {
           putString("status", "POOR_QUALITY")
           putDouble("quality", quality.toDouble())
@@ -112,20 +125,33 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
         return
       }
 
-      // Get embedding
-      val embedding = tfliteEngine?.embed(bitmap)
-      if (embedding == null) {
-        bitmap.recycle()
+      // Tight face crop — MLKit hint preferred, center-heuristic as fallback.
+      val faceHint = readFaceHint(hint)
+      val faceCrop = tfliteEngine?.detectAndCrop(working, faceHint)
+      working.recycle()
+      if (faceCrop == null) {
         val result = WritableNativeMap().apply {
           putString("status", "NO_FACE")
+          putDouble("quality", quality.toDouble())
+          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
         }
         promise.resolve(result)
         return
       }
 
-      // Match
-      val match = embeddingStore?.findMatch(embedding, 0.6f)
-      bitmap.recycle()
+      val embedding = tfliteEngine?.embed(faceCrop)
+      faceCrop.recycle()
+      if (embedding == null) {
+        val result = WritableNativeMap().apply {
+          putString("status", "NO_FACE")
+          putDouble("quality", quality.toDouble())
+          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
+        }
+        promise.resolve(result)
+        return
+      }
+
+      val match = embeddingStore?.findMatch(embedding, 0.5f)
 
       val result = WritableNativeMap().apply {
         if (match != null) {
@@ -223,8 +249,94 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
   private fun decodeBase64ToBitmap(base64: String): Bitmap? {
     return try {
       val bytes = Base64.decode(base64, Base64.DEFAULT)
-      BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+      val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+      val rawW = raw.width
+      val rawH = raw.height
+
+      // Vision Camera writes JPEGs with an EXIF orientation tag instead of
+      // pre-rotating pixels. Front-camera selfies on most Android phones come
+      // back with orientation 5 or 7 (rotate + mirror), so a simple ROTATE_90
+      // case isn't enough — we apply the full 8-value EXIF transform matrix.
+      val exif = androidx.exifinterface.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
+      val orientation = exif.getAttributeInt(
+        androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
+      )
+      val matrix = android.graphics.Matrix()
+      when (orientation) {
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL ->
+          matrix.setScale(-1f, 1f)
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 ->
+          matrix.setRotate(180f)
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+          matrix.setRotate(180f); matrix.postScale(-1f, 1f)
+        }
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_TRANSPOSE -> {
+          matrix.setRotate(90f); matrix.postScale(-1f, 1f)
+        }
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 ->
+          matrix.setRotate(90f)
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_TRANSVERSE -> {
+          matrix.setRotate(-90f); matrix.postScale(-1f, 1f)
+        }
+        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 ->
+          matrix.setRotate(-90f)
+      }
+      val upright = if (matrix.isIdentity) {
+        raw
+      } else {
+        val rotated = android.graphics.Bitmap.createBitmap(
+          raw, 0, 0, rawW, rawH, matrix, true
+        )
+        if (rotated !== raw) raw.recycle()
+        rotated
+      }
+      android.util.Log.d(
+        "DatalakeBM",
+        "decodeBase64ToBitmap raw=${rawW}x${rawH} exif=$orientation -> upright=${upright.width}x${upright.height}"
+      )
+      upright
     } catch (e: Exception) {
+      android.util.Log.e("DatalakeBM", "decodeBase64ToBitmap failed: ${e.message}")
+      null
+    }
+  }
+
+  /**
+   * Caps a freshly decoded camera bitmap at `maxSide` px on the longer edge. The
+   * native pipeline (scoreQuality, BlazeFace, MobileFaceNet) never needs more
+   * than this — running quality scoring on a 12 MP raw bitmap previously caused
+   * OutOfMemoryError. Bitmap.createScaledBitmap is a Skia native call, fast.
+   */
+  private fun downscaleForProcessing(bitmap: Bitmap, maxSide: Int = 720): Bitmap {
+    val w = bitmap.width
+    val h = bitmap.height
+    val longest = maxOf(w, h)
+    if (longest <= maxSide) return bitmap
+    val scale = maxSide.toFloat() / longest
+    val nw = (w * scale).toInt().coerceAtLeast(1)
+    val nh = (h * scale).toInt().coerceAtLeast(1)
+    val scaled = Bitmap.createScaledBitmap(bitmap, nw, nh, true)
+    if (scaled !== bitmap) bitmap.recycle()
+    android.util.Log.d("DatalakeBM", "downscaleForProcessing ${w}x${h} -> ${nw}x${nh}")
+    return scaled
+  }
+
+  /**
+   * Pulls a normalized face box (0..1 coords) out of the JS hint map, if any.
+   * Returning null falls back to the center-biased crop heuristic.
+   */
+  private fun readFaceHint(hint: ReadableMap?): TFLiteEngine.FaceHint? {
+    if (hint == null) return null
+    return try {
+      TFLiteEngine.FaceHint(
+        nx = hint.getDouble("nx").toFloat(),
+        ny = hint.getDouble("ny").toFloat(),
+        nw = hint.getDouble("nw").toFloat(),
+        nh = hint.getDouble("nh").toFloat()
+      )
+    } catch (e: Exception) {
+      android.util.Log.w("DatalakeBM", "readFaceHint failed: ${e.message}")
       null
     }
   }

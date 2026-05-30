@@ -19,3 +19,14 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// Force every native module to use the installed NDK. Some libraries (e.g.
+// react-native-worklets-core) pin a different NDK version that isn't installed,
+// which otherwise fails configuration with "did not have a source.properties file".
+subprojects { subproject ->
+    ["com.android.library", "com.android.application"].each { pluginId ->
+        subproject.plugins.withId(pluginId) {
+            subproject.android.ndkVersion = rootProject.ext.ndkVersion
+        }
+    }
+}
