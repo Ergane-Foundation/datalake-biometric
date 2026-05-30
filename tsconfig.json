@@ -1,4 +1,4 @@
-﻿{
+{
   "compilerOptions": {
     "rootDir": ".",
     "paths": {
@@ -26,5 +26,6 @@
     "strict": true,
     "target": "ESNext",
     "verbatimModuleSyntax": true
-  }
+  },
+  "exclude": ["example", "lib"]
 }

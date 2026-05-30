@@ -95,6 +95,9 @@
   "workspaces": [
     "example"
   ],
+  "resolutions": {
+    "jest-environment-node": "^30.0.0"
+  },
   "packageManager": "yarn@4.11.0",
   "react-native-builder-bob": {
     "source": "src",
@@ -131,6 +134,17 @@
   },
   "jest": {
     "preset": "@react-native/jest-preset",
+    "testEnvironment": "node",
+    "testEnvironmentOptions": {
+      "customExportConditions": [
+        "require",
+        "react-native"
+      ]
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/example/"
+    ],
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
       "<rootDir>/lib/"

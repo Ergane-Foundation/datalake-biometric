@@ -30,10 +30,6 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  override fun multiply(a: Double, b: Double): Double {
-    return a * b
-  }
-
   @ReactMethod
   override fun initialize(promise: Promise) {
     try {

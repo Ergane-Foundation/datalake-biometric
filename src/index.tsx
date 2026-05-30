@@ -75,7 +75,7 @@ export const BiometricSDK = {
   },
 
   /** Evaluates MediaPipe face-mesh landmarks and returns blink/liveness state. */
-  checkLiveness(landmarks: any[]): Promise<LivenessResult> {
+  checkLiveness(landmarks: Array<Array<number>>): Promise<LivenessResult> {
     return DatalakeBiometric.checkLiveness(landmarks);
   },
 
