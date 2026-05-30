@@ -7,7 +7,8 @@ import {
   Platform,
 } from 'react-native';
 import { BiometricSDK, type VerifyResult } from 'datalake-biometric';
-import { colors, s } from '../theme';
+import { useTheme } from '../ThemeContext';
+import { s } from '../theme';
 import type { Screen } from '../types';
 
 type Props = {
@@ -22,15 +23,17 @@ const MODELS = [
 ];
 
 function Stat({ label, value }: { label: string; value: string }) {
+  const { colors } = useTheme();
   return (
     <View style={[s.row, { marginVertical: 5 }]}>
-      <Text style={s.statLabel}>{label}</Text>
-      <Text style={s.statValue}>{value}</Text>
+      <Text style={[s.statLabel, { color: colors.textDim }]}>{label}</Text>
+      <Text style={[s.statValue, { color: colors.text }]}>{value}</Text>
     </View>
   );
 }
 
 export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
+  const { colors } = useTheme();
   const [pending, setPending] = useState<number>(0);
 
   useEffect(() => {
@@ -45,12 +48,24 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
   const device = `${c?.Brand ?? ''} ${c?.Model ?? 'Unknown'}`.trim();
 
   return (
-    <ScrollView style={s.screen} contentContainerStyle={{ paddingBottom: 30 }}>
-      <Text style={s.title}>Benchmark</Text>
-      <Text style={s.subtitle}>On-device performance & footprint</Text>
+    <ScrollView
+      style={[s.screen, { backgroundColor: colors.bg }]}
+      contentContainerStyle={{ paddingBottom: 30 }}
+    >
+      <Text style={[s.title, { color: colors.text }]}>Benchmark</Text>
+      <Text style={[s.subtitle, { color: colors.textDim }]}>
+        On-device performance & footprint
+      </Text>
 
-      <View style={s.card}>
-        <Text style={s.cardTitle}>Models (target &lt; 20 MB)</Text>
+      <View
+        style={[
+          s.card,
+          { backgroundColor: colors.cardBg, borderColor: colors.border },
+        ]}
+      >
+        <Text style={[s.cardTitle, { color: colors.text }]}>
+          Models (target &lt; 20 MB)
+        </Text>
         {MODELS.map((m) => (
           <Stat key={m.name} label={m.name} value={m.size} />
         ))}
@@ -64,8 +79,15 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
         <Stat label="Total" value="~4.2 MB" />
       </View>
 
-      <View style={s.card}>
-        <Text style={s.cardTitle}>Last verification</Text>
+      <View
+        style={[
+          s.card,
+          { backgroundColor: colors.cardBg, borderColor: colors.border },
+        ]}
+      >
+        <Text style={[s.cardTitle, { color: colors.text }]}>
+          Last verification
+        </Text>
         {lastVerify ? (
           <>
             <Stat label="Status" value={lastVerify.status} />
@@ -85,24 +107,31 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
             />
           </>
         ) : (
-          <Text style={s.cardBody}>
+          <Text style={[s.cardBody, { color: colors.textDim }]}>
             Run a verification first to see live timings here.
           </Text>
         )}
       </View>
 
-      <View style={s.card}>
-        <Text style={s.cardTitle}>Device</Text>
+      <View
+        style={[
+          s.card,
+          { backgroundColor: colors.cardBg, borderColor: colors.border },
+        ]}
+      >
+        <Text style={[s.cardTitle, { color: colors.text }]}>Device</Text>
         <Stat label="Model" value={device || 'Unknown'} />
         <Stat label="OS" value={`${Platform.OS} ${Platform.Version}`} />
         <Stat label="Pending sync" value={String(pending)} />
       </View>
 
       <TouchableOpacity
-        style={[s.button, s.buttonGhost]}
+        style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
         onPress={() => navigate('menu')}
       >
-        <Text style={[s.buttonText, s.buttonGhostText]}>← Back to menu</Text>
+        <Text style={[s.buttonText, { color: colors.text }]}>
+          ← Back to menu
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );

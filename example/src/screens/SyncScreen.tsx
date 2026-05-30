@@ -8,7 +8,8 @@ import {
   Alert,
 } from 'react-native';
 import { BiometricSDK, type AttendanceRecord } from 'datalake-biometric';
-import { colors, s } from '../theme';
+import { useTheme } from '../ThemeContext';
+import { s } from '../theme';
 import type { Screen } from '../types';
 
 type Props = {
@@ -16,6 +17,7 @@ type Props = {
 };
 
 export default function SyncScreen({ navigate }: Props) {
+  const { colors } = useTheme();
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -55,20 +57,32 @@ export default function SyncScreen({ navigate }: Props) {
   }, [records, refresh]);
 
   return (
-    <ScrollView style={s.screen} contentContainerStyle={{ paddingBottom: 30 }}>
-      <Text style={s.title}>Sync Status</Text>
-      <Text style={s.subtitle}>Offline attendance queued for upload</Text>
+    <ScrollView
+      style={[s.screen, { backgroundColor: colors.bg }]}
+      contentContainerStyle={{ paddingBottom: 30 }}
+    >
+      <Text style={[s.title, { color: colors.text }]}>Sync Status</Text>
+      <Text style={[s.subtitle, { color: colors.textDim }]}>
+        Offline attendance queued for upload
+      </Text>
 
-      <View style={s.card}>
+      <View
+        style={[
+          s.card,
+          { backgroundColor: colors.cardBg, borderColor: colors.border },
+        ]}
+      >
         <View style={s.row}>
-          <Text style={s.cardTitle}>Pending records</Text>
+          <Text style={[s.cardTitle, { color: colors.text }]}>
+            Pending records
+          </Text>
           <View style={[s.pill, { backgroundColor: colors.cardAlt }]}>
             <Text style={[s.pillText, { color: colors.warn }]}>
               {records.length}
             </Text>
           </View>
         </View>
-        <Text style={s.cardBody}>
+        <Text style={[s.cardBody, { color: colors.textDim }]}>
           Records are signed (HMAC-SHA256) and stored locally while offline,
           then uploaded when connectivity returns.
         </Text>
@@ -77,19 +91,34 @@ export default function SyncScreen({ navigate }: Props) {
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
       ) : records.length === 0 ? (
-        <View style={s.card}>
-          <Text style={s.cardBody}>No pending records. ✅</Text>
+        <View
+          style={[
+            s.card,
+            { backgroundColor: colors.cardBg, borderColor: colors.border },
+          ]}
+        >
+          <Text style={[s.cardBody, { color: colors.textDim }]}>
+            No pending records. ✅
+          </Text>
         </View>
       ) : (
         records.map((r) => (
-          <View key={r.id} style={s.card}>
+          <View
+            key={r.id}
+            style={[
+              s.card,
+              { backgroundColor: colors.cardBg, borderColor: colors.border },
+            ]}
+          >
             <View style={s.row}>
-              <Text style={s.statValue}>{r.workerId}</Text>
-              <Text style={s.statLabel}>
+              <Text style={[s.statValue, { color: colors.text }]}>
+                {r.workerId}
+              </Text>
+              <Text style={[s.statLabel, { color: colors.textDim }]}>
                 {new Date(r.timestamp).toLocaleTimeString()}
               </Text>
             </View>
-            <Text style={s.cardBody}>
+            <Text style={[s.cardBody, { color: colors.textDim }]}>
               {r.latitude.toFixed(4)}, {r.longitude.toFixed(4)} · conf{' '}
               {(r.confidence * 100).toFixed(0)}%
             </Text>
@@ -98,7 +127,11 @@ export default function SyncScreen({ navigate }: Props) {
       )}
 
       <TouchableOpacity
-        style={[s.button, records.length === 0 && { opacity: 0.4 }]}
+        style={[
+          s.button,
+          { backgroundColor: colors.primary },
+          records.length === 0 && { opacity: 0.4 },
+        ]}
         disabled={records.length === 0 || syncing}
         onPress={syncNow}
       >
@@ -107,15 +140,20 @@ export default function SyncScreen({ navigate }: Props) {
         </Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={[s.button, s.buttonGhost]} onPress={refresh}>
-        <Text style={[s.buttonText, s.buttonGhostText]}>Refresh</Text>
+      <TouchableOpacity
+        style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
+        onPress={refresh}
+      >
+        <Text style={[s.buttonText, { color: colors.text }]}>Refresh</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[s.button, s.buttonGhost]}
+        style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
         onPress={() => navigate('menu')}
       >
-        <Text style={[s.buttonText, s.buttonGhostText]}>← Back to menu</Text>
+        <Text style={[s.buttonText, { color: colors.text }]}>
+          ← Back to menu
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );

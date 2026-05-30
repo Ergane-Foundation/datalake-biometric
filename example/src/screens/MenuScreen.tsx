@@ -1,5 +1,12 @@
-import { Text, View, TouchableOpacity, ScrollView } from 'react-native';
-import { colors, s } from '../theme';
+import {
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  View,
+} from 'react-native';
+import { useTheme } from '../ThemeContext';
+import { ThemeToggle } from '../ThemeToggle';
 import type { InitStatus, Screen } from '../types';
 
 type Props = {
@@ -35,10 +42,11 @@ const ITEMS: { key: Screen; title: string; body: string; emoji: string }[] = [
 ];
 
 function StatusPill({ status }: { status: InitStatus }) {
+  const { colors } = useTheme();
   const map = {
     pending: { bg: colors.cardAlt, fg: colors.textDim, label: 'Initialising…' },
-    ready: { bg: '#0E3D2E', fg: colors.success, label: 'SDK Ready' },
-    failed: { bg: '#3D1414', fg: colors.danger, label: 'Init Failed' },
+    ready: { bg: colors.success, fg: '#FFFFFF', label: 'SDK Ready' },
+    failed: { bg: colors.danger, fg: '#FFFFFF', label: 'Init Failed' },
   }[status];
   return (
     <View style={[s.pill, { backgroundColor: map.bg }]}>
@@ -48,32 +56,96 @@ function StatusPill({ status }: { status: InitStatus }) {
 }
 
 export default function MenuScreen({ navigate, initStatus }: Props) {
+  const { colors } = useTheme();
+
   return (
-    <ScrollView style={s.screen} contentContainerStyle={{ paddingBottom: 30 }}>
+    <ScrollView
+      style={[s.screen, { backgroundColor: colors.bg }]}
+      contentContainerStyle={{ paddingBottom: 30 }}
+    >
       <View style={[s.row, { marginBottom: 16 }]}>
         <View style={{ flex: 1 }}>
-          <Text style={s.title}>Datalake Biometric</Text>
-          <Text style={s.subtitle}>Offline face recognition + liveness</Text>
+          <Text style={[s.title, { color: colors.text }]}>
+            Datalake Biometric
+          </Text>
+          <Text style={[s.subtitle, { color: colors.textDim }]}>
+            Offline face recognition + liveness
+          </Text>
         </View>
-        <StatusPill status={initStatus} />
+        <View style={{ alignItems: 'flex-end', gap: 8 }}>
+          <ThemeToggle />
+          <StatusPill status={initStatus} />
+        </View>
       </View>
 
       {ITEMS.map((it) => (
         <TouchableOpacity
           key={it.key}
           activeOpacity={0.8}
-          style={s.card}
+          style={[
+            s.card,
+            {
+              backgroundColor: colors.cardBg,
+              borderColor: colors.border,
+            },
+          ]}
           onPress={() => navigate(it.key)}
         >
           <View style={s.row}>
-            <Text style={s.cardTitle}>
+            <Text style={[s.cardTitle, { color: colors.text }]}>
               {it.emoji} {it.title}
             </Text>
             <Text style={{ color: colors.textDim, fontSize: 22 }}>›</Text>
           </View>
-          <Text style={s.cardBody}>{it.body}</Text>
+          <Text style={[s.cardBody, { color: colors.textDim }]}>{it.body}</Text>
         </TouchableOpacity>
       ))}
     </ScrollView>
   );
 }
+
+const s = StyleSheet.create({
+  screen: {
+    flex: 1,
+    padding: 20,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 14,
+    marginBottom: 20,
+  },
+  card: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 18,
+    marginBottom: 14,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  cardBody: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  pill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    alignSelf: 'flex-start',
+  },
+  pillText: {
+    fontWeight: '700',
+    fontSize: 13,
+  },
+});

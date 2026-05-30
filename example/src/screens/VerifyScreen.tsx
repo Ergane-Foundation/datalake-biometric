@@ -10,7 +10,8 @@ import { Camera } from 'react-native-vision-camera';
 import { BiometricSDK, type VerifyResult } from 'datalake-biometric';
 import { FaceCamera } from '../FaceCamera';
 import { useFaceState, takePhotoBase64 } from '../camera';
-import { colors, s } from '../theme';
+import { useTheme, type ThemeColors } from '../ThemeContext';
+import { s } from '../theme';
 import type { Screen } from '../types';
 
 type Props = {
@@ -28,6 +29,7 @@ const LAT = 10.0;
 const LNG = 20.0;
 
 export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
+  const { colors } = useTheme();
   const camera = useRef<Camera>(null);
   const { frameProcessor, faceInFrame, blinkCount, reset, getLastHint } =
     useFaceState();
@@ -89,9 +91,14 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
   };
 
   return (
-    <ScrollView style={s.screen} contentContainerStyle={{ paddingBottom: 30 }}>
-      <Text style={s.title}>Verify + Liveness</Text>
-      <Text style={s.subtitle}>Blink twice to prove you are live</Text>
+    <ScrollView
+      style={[s.screen, { backgroundColor: colors.bg }]}
+      contentContainerStyle={{ paddingBottom: 30 }}
+    >
+      <Text style={[s.title, { color: colors.text }]}>Verify + Liveness</Text>
+      <Text style={[s.subtitle, { color: colors.textDim }]}>
+        Blink twice to prove you are live
+      </Text>
 
       <FaceCamera
         ref={camera}
@@ -102,15 +109,10 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
           <View
             style={[
               s.pill,
-              { backgroundColor: faceInFrame ? '#0E3D2E' : '#3D1414' },
+              { backgroundColor: faceInFrame ? colors.success : colors.danger },
             ]}
           >
-            <Text
-              style={[
-                s.pillText,
-                { color: faceInFrame ? colors.success : colors.danger },
-              ]}
-            >
+            <Text style={[s.pillText, { color: '#FFFFFF' }]}>
               {faceInFrame ? '● Face detected' : '○ No face'}
             </Text>
           </View>
@@ -142,52 +144,77 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
       </FaceCamera>
 
       {phase === 'spoof' && (
-        <View style={[s.card, { borderColor: colors.danger }]}>
+        <View
+          style={[
+            s.card,
+            {
+              backgroundColor: colors.cardBg,
+              borderColor: colors.danger,
+            },
+          ]}
+        >
           <Text style={[s.cardTitle, { color: colors.danger }]}>
             ⛔ SPOOF / NO LIVENESS
           </Text>
-          <Text style={s.cardBody}>
+          <Text style={[s.cardBody, { color: colors.textDim }]}>
             No blink detected within {LIVENESS_TIMEOUT_MS / 1000}s. A printed
             photo or video replay cannot pass liveness.
           </Text>
         </View>
       )}
 
-      {phase === 'result' && result && <ResultCard result={result} />}
+      {phase === 'result' && result && (
+        <ResultCard result={result} colors={colors} />
+      )}
 
       {(phase === 'result' || phase === 'spoof') && (
-        <TouchableOpacity style={s.button} onPress={retry}>
+        <TouchableOpacity
+          style={[s.button, { backgroundColor: colors.primary }]}
+          onPress={retry}
+        >
           <Text style={s.buttonText}>Try again</Text>
         </TouchableOpacity>
       )}
 
       <TouchableOpacity
-        style={[s.button, s.buttonGhost]}
+        style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
         onPress={() => navigate('menu')}
       >
-        <Text style={[s.buttonText, s.buttonGhostText]}>← Back to menu</Text>
+        <Text style={[s.buttonText, { color: colors.text }]}>
+          ← Back to menu
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-function ResultCard({ result }: { result: VerifyResult }) {
+function ResultCard({
+  result,
+  colors,
+}: {
+  result: VerifyResult;
+  colors: ThemeColors;
+}) {
   const isMatch = result.status === 'MATCH';
   const tone = isMatch ? colors.success : colors.warn;
   return (
-    <View style={[s.card, { borderColor: tone }]}>
+    <View
+      style={[s.card, { backgroundColor: colors.cardBg, borderColor: tone }]}
+    >
       <Text style={[s.cardTitle, { color: tone }]}>
         {isMatch ? '✅ MATCH' : `⚠️ ${result.status}`}
       </Text>
       {isMatch && (
         <>
-          <Text style={s.cardBody}>Worker: {result.workerId}</Text>
-          <Text style={s.cardBody}>
+          <Text style={[s.cardBody, { color: colors.textDim }]}>
+            Worker: {result.workerId}
+          </Text>
+          <Text style={[s.cardBody, { color: colors.textDim }]}>
             Confidence: {((result.confidence ?? 0) * 100).toFixed(1)}%
           </Text>
         </>
       )}
-      <Text style={[s.cardBody, { marginTop: 6 }]}>
+      <Text style={[s.cardBody, { color: colors.textDim, marginTop: 6 }]}>
         Inference {result.inferenceMs ?? '–'} ms · total {result.totalMs ?? '–'}{' '}
         ms
         {result.quality != null

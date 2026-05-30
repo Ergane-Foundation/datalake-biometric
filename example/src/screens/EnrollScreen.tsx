@@ -11,7 +11,8 @@ import { Camera } from 'react-native-vision-camera';
 import { BiometricSDK } from 'datalake-biometric';
 import { FaceCamera } from '../FaceCamera';
 import { useFaceState, takePhotoBase64 } from '../camera';
-import { colors, s } from '../theme';
+import { useTheme } from '../ThemeContext';
+import { s } from '../theme';
 import type { Screen } from '../types';
 
 type Props = {
@@ -23,6 +24,7 @@ const FRAMES = 3;
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export default function EnrollScreen({ navigate, isActive }: Props) {
+  const { colors } = useTheme();
   const camera = useRef<Camera>(null);
   const { frameProcessor, faceInFrame, getLastHint } = useFaceState();
 
@@ -67,9 +69,12 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
   };
 
   return (
-    <ScrollView style={s.screen} contentContainerStyle={{ paddingBottom: 30 }}>
-      <Text style={s.title}>Enroll Worker</Text>
-      <Text style={s.subtitle}>
+    <ScrollView
+      style={[s.screen, { backgroundColor: colors.bg }]}
+      contentContainerStyle={{ paddingBottom: 30 }}
+    >
+      <Text style={[s.title, { color: colors.text }]}>Enroll Worker</Text>
+      <Text style={[s.subtitle, { color: colors.textDim }]}>
         Capture {FRAMES} frames to store an embedding
       </Text>
 
@@ -79,7 +84,14 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
         placeholder="Worker ID (e.g. W-1042)"
         placeholderTextColor={colors.textDim}
         autoCapitalize="characters"
-        style={styles.input}
+        style={[
+          styles.input,
+          {
+            backgroundColor: colors.cardBg,
+            borderColor: colors.border,
+            color: colors.text,
+          },
+        ]}
       />
 
       <FaceCamera
@@ -91,15 +103,10 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
           <View
             style={[
               s.pill,
-              { backgroundColor: faceInFrame ? '#0E3D2E' : '#3D1414' },
+              { backgroundColor: faceInFrame ? colors.success : colors.danger },
             ]}
           >
-            <Text
-              style={[
-                s.pillText,
-                { color: faceInFrame ? colors.success : colors.danger },
-              ]}
-            >
+            <Text style={[s.pillText, { color: '#FFFFFF' }]}>
               {faceInFrame ? '● Face detected' : '○ No face'}
             </Text>
           </View>
@@ -112,13 +119,22 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
       </FaceCamera>
 
       {message && (
-        <View style={s.card}>
-          <Text style={s.cardBody}>{message}</Text>
+        <View
+          style={[
+            s.card,
+            { backgroundColor: colors.cardBg, borderColor: colors.border },
+          ]}
+        >
+          <Text style={[s.cardBody, { color: colors.textDim }]}>{message}</Text>
         </View>
       )}
 
       <TouchableOpacity
-        style={[s.button, !canEnroll && { opacity: 0.4 }]}
+        style={[
+          s.button,
+          { backgroundColor: colors.primary },
+          !canEnroll && { opacity: 0.4 },
+        ]}
         disabled={!canEnroll}
         onPress={enroll}
       >
@@ -128,10 +144,12 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[s.button, s.buttonGhost]}
+        style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
         onPress={() => navigate('menu')}
       >
-        <Text style={[s.buttonText, s.buttonGhostText]}>← Back to menu</Text>
+        <Text style={[s.buttonText, { color: colors.text }]}>
+          ← Back to menu
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -139,13 +157,10 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
 
 const styles = StyleSheet.create({
   input: {
-    backgroundColor: colors.card,
-    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    color: colors.text,
     fontSize: 16,
     marginBottom: 16,
   },
