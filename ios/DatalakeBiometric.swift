@@ -3,6 +3,9 @@
 // Frameworks: Foundation, React, Vision, CoreML, CryptoKit, Security, SQLite3
 
 import Foundation
+import UIKit
+import CoreVideo
+import CoreGraphics
 import React
 import Vision
 import CoreML

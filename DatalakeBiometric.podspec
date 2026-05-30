@@ -10,7 +10,9 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.authors      = package["author"]
 
-  s.platforms    = { :ios => min_ios_version_supported }
+  # Pinned to 15.5 to match example/ios/Podfile — required by
+  # GoogleMLKit/FaceDetection 8.0 (pulled in by react-native-vision-camera-face-detector).
+  s.platforms    = { :ios => '15.5' }
   s.source       = { :git => "https://github.com/vaani1127/datalake-biometric.git", :tag => "#{s.version}" }
 
   s.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
