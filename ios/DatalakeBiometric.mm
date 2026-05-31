@@ -1,14 +1,23 @@
 // DatalakeBiometric.mm
-// Objective-C++ bridge — exposes Swift class to React Native via RCT_EXTERN_MODULE.
-// DO NOT add business logic here; implementation lives in DatalakeBiometric.swift.
+// Objective-C++ bridge — exposes the Swift class to React Native via
+// RCT_EXTERN_MODULE. Business logic lives in DatalakeBiometric.swift.
+//
+// NOTE: do NOT #import "DatalakeBiometric-Swift.h" here. The
+// `@interface RCT_EXTERN_MODULE(...)` pattern below expands into a
+// forward declaration of the class; the Swift implementation is resolved
+// at link time. Importing the Swift header on top of that would risk a
+// duplicate-@interface warning/error.
 
 #import <React/RCTBridgeModule.h>
-#import "DatalakeBiometric-Swift.h"
 
 // ---------------------------------------------------------------------------
-// Module registration
+// Module registration. `@interface` is required — the RCT_EXTERN_MODULE macro
+// expands to `objc_name : objc_supername @end ...` and only parses as a
+// top-level declaration when preceded by `@interface`. The macro leaves the
+// final `@interface DatalakeBiometric (RCTExternMethods)` open so that the
+// `RCT_EXTERN_METHOD` lines below land inside it; we close with `@end`.
 // ---------------------------------------------------------------------------
-RCT_EXTERN_MODULE(DatalakeBiometric, NSObject)
+@interface RCT_EXTERN_MODULE(DatalakeBiometric, NSObject)
 
 // ---------------------------------------------------------------------------
 // initialize() -> Promise<boolean>
@@ -67,3 +76,5 @@ RCT_EXTERN_METHOD(
   resolve:(RCTPromiseResolveBlock)resolve
   reject:(RCTPromiseRejectBlock)reject
 )
+
+@end
