@@ -16,10 +16,21 @@ Pod::Spec.new do |s|
   s.source       = { :git => "https://github.com/vaani1127/datalake-biometric.git", :tag => "#{s.version}" }
 
   s.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
-  s.private_header_files = "ios/**/*.h"
 
   # Swift ↔ Objective-C interop
   s.swift_version = "5.9"
+
+  # DEFINES_MODULE generates a module map for this pod, which is required so the
+  # Swift-generated "DatalakeBiometric-Swift.h" header (produced from
+  # ios/DatalakeBiometric.swift) is discoverable when DatalakeBiometric.mm
+  # imports it via #import "DatalakeBiometric-Swift.h". Without this flag the
+  # Swift compiler still produces the header but ObjC++ can't find it, so the
+  # @objc(DatalakeBiometric) class is "unknown type" and every RCT_EXTERN_MODULE
+  # / RCT_EXTERN_METHOD line fails to compile.
+  s.pod_target_xcconfig = {
+    "DEFINES_MODULE" => "YES",
+    "SWIFT_VERSION" => "5.9"
+  }
 
   # SQLCipher — encrypted SQLite store for embeddings & attendance log
   s.dependency "SQLCipher"

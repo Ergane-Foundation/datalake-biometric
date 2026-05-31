@@ -16,10 +16,14 @@ type Props = {
   lastVerify: VerifyResult | null;
 };
 
+// Actual bundled sizes (verified from android/src/main/assets/models/*.tflite).
+// Liveness runs from MLKit eye-open probability in JS, so the face_mesh model
+// is no longer loaded by the native pipeline — its line is kept for the spec
+// pitch ("3-model architecture") but marked as not loaded.
 const MODELS = [
   { name: 'BlazeFace (detect)', size: '0.22 MB' },
-  { name: 'MobileFaceNet (embed)', size: '~1.0 MB' },
-  { name: 'Face Mesh (liveness)', size: '~3.0 MB' },
+  { name: 'MobileFaceNet (embed)', size: '5.00 MB' },
+  { name: 'Face Mesh (unused)', size: '— (JS liveness)' },
 ];
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -76,7 +80,7 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
             marginVertical: 8,
           }}
         />
-        <Stat label="Total" value="~4.2 MB" />
+        <Stat label="Total" value="~5.2 MB" />
       </View>
 
       <View

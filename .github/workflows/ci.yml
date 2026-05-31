@@ -14,6 +14,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Opt all jobs into Node.js 24 for JavaScript actions. The pinned actions
+# (actions/cache, actions/setup-node) still ship a Node 20 entrypoint which
+# GitHub will retire on 2026-09-16; this env flag forces the runner to use
+# Node 24 even with the existing SHA pins. Drop once we bump the actions
+# themselves to v5+ tags.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   lint:
     runs-on: ubuntu-latest
