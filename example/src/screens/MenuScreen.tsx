@@ -92,10 +92,15 @@ export default function MenuScreen({ navigate, initStatus }: Props) {
           onPress={() => navigate(it.key)}
         >
           <View style={s.row}>
-            <Text style={[s.cardTitle, { color: colors.text }]}>
+            <Text
+              style={[s.cardTitle, { color: colors.text, flex: 1 }]}
+              numberOfLines={1}
+            >
               {it.emoji} {it.title}
             </Text>
-            <Text style={{ color: colors.textDim, fontSize: 22 }}>›</Text>
+            <Text style={{ color: colors.textDim, fontSize: 22, marginLeft: 8 }}>
+              ›
+            </Text>
           </View>
           <Text style={[s.cardBody, { color: colors.textDim }]}>{it.body}</Text>
         </TouchableOpacity>

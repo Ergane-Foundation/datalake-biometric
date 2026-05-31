@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Text,
   View,
@@ -7,13 +7,19 @@ import {
   ScrollView,
   StyleSheet,
 } from 'react-native';
-import { Camera } from 'react-native-vision-camera';
+import { Camera, useCameraPermission } from 'react-native-vision-camera';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BiometricSDK } from 'datalake-biometric';
 import { FaceCamera } from '../FaceCamera';
 import { useFaceState, takePhotoBase64 } from '../camera';
 import { useTheme } from '../ThemeContext';
 import { s } from '../theme';
 import type { Screen } from '../types';
+
+// One-time note shown on the Enroll screen for the very first launch on a
+// fresh install — warns the user about the Android first-grant black-preview
+// quirk. Dismissing it writes the flag to AsyncStorage so it never re-appears.
+const FIRST_LAUNCH_NOTE_KEY = '@enroll_first_launch_note_seen';
 
 type Props = {
   navigate: (screen: Screen) => void;
@@ -27,11 +33,33 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
   const { colors } = useTheme();
   const camera = useRef<Camera>(null);
   const { frameProcessor, faceInFrame, getLastHint } = useFaceState();
+  // Gate the first-launch note on actual camera permission so it never shows
+  // when the user denied access — at that point there's no camera mount, so
+  // the "black on first launch" warning is irrelevant.
+  const { hasPermission } = useCameraPermission();
 
   const [workerId, setWorkerId] = useState('');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
+  const [hasSeenNote, setHasSeenNote] = useState(true);
+  const [noteLoaded, setNoteLoaded] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(FIRST_LAUNCH_NOTE_KEY)
+      .then((seen) => {
+        setHasSeenNote(seen === '1');
+        setNoteLoaded(true);
+      })
+      .catch(() => setNoteLoaded(true));
+  }, []);
+
+  const showFirstLaunchNote = noteLoaded && hasPermission && !hasSeenNote;
+
+  const dismissFirstLaunchNote = () => {
+    setHasSeenNote(true);
+    AsyncStorage.setItem(FIRST_LAUNCH_NOTE_KEY, '1').catch(() => {});
+  };
 
   const canEnroll = workerId.trim().length > 0 && faceInFrame && !busy;
 
@@ -77,6 +105,34 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
       <Text style={[s.subtitle, { color: colors.textDim }]}>
         Capture {FRAMES} frames to store an embedding
       </Text>
+
+      {showFirstLaunchNote && (
+        <View
+          style={[
+            s.card,
+            { backgroundColor: colors.cardBg, borderColor: colors.warn },
+          ]}
+        >
+          <Text
+            style={[s.cardTitle, { color: colors.warn, marginBottom: 6 }]}
+          >
+            NOTE
+          </Text>
+          <Text style={[s.cardBody, { color: colors.textDim }]}>
+            If camera shows black on first launch, tap Back and re-enter —
+            happens once per fresh install.
+          </Text>
+          <TouchableOpacity
+            style={[
+              s.button,
+              { backgroundColor: colors.primary, marginTop: 12 },
+            ]}
+            onPress={dismissFirstLaunchNote}
+          >
+            <Text style={s.buttonText}>Got it</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <TextInput
         value={workerId}
