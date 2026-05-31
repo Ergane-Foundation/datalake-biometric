@@ -6,6 +6,6 @@
  * string here and commit. Until then `null` keeps the Sync screen in
  * local-only mode (records get marked synced but nothing leaves the device).
  */
-export const SYNC_ENDPOINT: string | null = null;
+export const SYNC_ENDPOINT: string | null = 'https://YOUR-API-ID.execute-api.REGION.amazonaws.com/sync';
 // Example after first deploy:
 // export const SYNC_ENDPOINT = 'https://abc123.execute-api.ap-south-1.amazonaws.com/sync';
