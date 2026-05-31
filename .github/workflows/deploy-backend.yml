@@ -53,7 +53,10 @@ jobs:
 
       - name: SAM build
         working-directory: backend
-        run: sam build --use-container=false
+        # No --use-container — the GitHub runner already has Python 3.11
+        # via setup-python above, and Docker-based builds are slower for
+        # a pure-Python Lambda anyway.
+        run: sam build
 
       - name: SAM deploy
         working-directory: backend
