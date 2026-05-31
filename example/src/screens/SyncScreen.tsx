@@ -8,6 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import { BiometricSDK, type AttendanceRecord } from 'datalake-biometric';
+import { SYNC_ENDPOINT } from '../config';
 import { useTheme } from '../ThemeContext';
 import { s } from '../theme';
 import type { Screen } from '../types';
@@ -42,12 +43,44 @@ export default function SyncScreen({ navigate }: Props) {
     if (records.length === 0) return;
     setSyncing(true);
     try {
-      // In production this POSTs to the AWS Lambda sync endpoint, which verifies
-      // each HMAC signature and writes idempotently to DynamoDB. For the demo we
-      // mark them synced locally once "uploaded".
       const ids = records.map((r) => r.id);
-      await BiometricSDK.markSynced(ids);
-      Alert.alert('Synced', `${ids.length} record(s) uploaded.`);
+
+      if (SYNC_ENDPOINT) {
+        // POST to the deployed AWS Lambda sync endpoint. Each record carries
+        // an HMAC-SHA256 signature for audit; the Lambda writes idempotently
+        // to DynamoDB (see backend/lambda_sync_handler.py).
+        const response = await fetch(SYNC_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ records }),
+        });
+        if (!response.ok) {
+          throw new Error(
+            `Server returned ${response.status}: ${await response.text()}`
+          );
+        }
+        const result = await response.json();
+        const summary = result?.summary ?? {};
+        const ok = (summary.stored ?? 0) + (summary.duplicate ?? 0);
+        const failed = summary.failed ?? 0;
+        await BiometricSDK.markSynced(ids);
+        Alert.alert(
+          failed > 0 ? 'Synced with errors' : 'Synced',
+          `${ok}/${ids.length} record(s) uploaded` +
+            (failed > 0 ? `, ${failed} failed` : '.')
+        );
+      } else {
+        // No endpoint configured (first build) — mark synced locally only,
+        // so the offline / sync flow can still be demoed end-to-end without
+        // AWS. After deploy-backend runs, set SYNC_ENDPOINT in example/src/config.ts.
+        await BiometricSDK.markSynced(ids);
+        Alert.alert(
+          'Synced (local)',
+          `${ids.length} record(s) marked synced. ` +
+            'Set SYNC_ENDPOINT in src/config.ts to upload to AWS.'
+        );
+      }
+
       await refresh();
     } catch (e: any) {
       Alert.alert('Sync failed', e?.message ?? 'Unknown error');

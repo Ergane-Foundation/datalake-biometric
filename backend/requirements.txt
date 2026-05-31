@@ -1,0 +1,4 @@
+# Runtime dependencies. boto3 is bundled with the AWS Lambda Python 3.11
+# runtime so we don't ship it again here. Leave this file in place so
+# `sam build` recognises the directory as a Python package and copies
+# lambda_sync_handler.py into the deployment artefact.

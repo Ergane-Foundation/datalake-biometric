@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: |
+  datalake-biometric attendance sync backend.
+
+  Single-stack deployment of:
+    - DynamoDB table that stores signed attendance records
+      (PK = deviceId, SK = id, GSI on workerId+timestamp for queries).
+    - Python 3.11 Lambda that idempotently writes incoming records.
+    - HTTP API (cheaper than REST API) exposing POST /sync.
+
+  All resources stay comfortably inside the AWS Free Tier for the demo
+  workload (well under 1M Lambda invocations and 25 GB DynamoDB storage).
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 10
+    MemorySize: 256
+    Tracing: Active
+    Architectures:
+      - arm64  # ~20% cheaper, fully free-tier eligible
+
+Resources:
+  AttendanceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-attendance"
+      BillingMode: PAY_PER_REQUEST  # zero idle cost; scales for demo bursts
+      AttributeDefinitions:
+        - AttributeName: deviceId
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: workerId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: deviceId
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: WorkerTimestampIndex
+          KeySchema:
+            - AttributeName: workerId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  SyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-sync"
+      CodeUri: ./
+      Handler: lambda_sync_handler.handler
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref AttendanceTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceTable
+      Events:
+        SyncEndpoint:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BiometricApi
+            Path: /sync
+            Method: POST
+
+  BiometricApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      # Note: no authorizer in this reference stack — the device-stored HMAC
+      # signature is preserved with each row for audit but server-side
+      # verification needs per-device key registration to be useful. See
+      # SECURITY.md for the threat model and future hardening notes.
+      CorsConfiguration:
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+        AllowOrigins:
+          - '*'
+
+Outputs:
+  ApiUrl:
+    Description: HTTPS endpoint that the React Native SyncScreen POSTs to.
+    Value: !Sub "https://${BiometricApi}.execute-api.${AWS::Region}.amazonaws.com/sync"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  TableName:
+    Description: DynamoDB table name (for AWS Console / CLI debugging).
+    Value: !Ref AttendanceTable
+    Export:
+      Name: !Sub "${AWS::StackName}-TableName"
+
+  FunctionName:
+    Description: Lambda function name (for log tailing).
+    Value: !Ref SyncFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionName"

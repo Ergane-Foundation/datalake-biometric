@@ -122,12 +122,13 @@ topology, for future use if a 468-landmark JS source is added.
 ## Transit security (AWS sync)
 
 - Records are uploaded over TLS to API Gateway → Lambda.
-- The Lambda re-verifies the HMAC with the device's known key before any
-  DynamoDB write.
-- DynamoDB writes use `condition: attribute_not_exists(record_id)` so a
-  duplicate retry cannot create a second row.
+- DynamoDB writes use `condition: attribute_not_exists(id)` so a duplicate
+  retry cannot create a second row.
 - No raw images, no facial templates, leave the device. Sync payload is the
   attendance row only.
+- **HMAC signature is preserved in DynamoDB for audit but server-side
+  verification is intentionally not performed in this build** — see the
+  next section.
 
 ## What goes off-device
 
@@ -157,6 +158,22 @@ sensitive personal data. The SDK aligns with its main obligations:
 
 ## Known limitations
 
+- **Open sync endpoint (no API authorizer).** The deployed API Gateway HTTP
+  API accepts unauthenticated POSTs to `/sync`. Anyone with the URL can
+  write rows; rate-limiting is left to DynamoDB's on-demand throttling.
+  Production hardening: add an API Gateway authorizer (Cognito user pool,
+  Lambda authorizer with a per-device JWT, or IAM SigV4 from the app).
+- **Server-side HMAC verification is skipped.** Each attendance record is
+  signed on-device with a 32-byte key generated inside the Android Keystore
+  ([KeyVault.kt](android/src/main/java/com/datalakebiometric/KeyVault.kt));
+  that key is hardware-bound and never leaves the device. The Lambda has no
+  way to recompute the signature without a separate registration handshake
+  that would expose the key. The signature is therefore stored alongside
+  the row for post-hoc audit (a tamper-detecting consumer with a registered
+  device key could verify out-of-band), but the Lambda itself trusts what
+  the device sends. Production design: per-device key registration on first
+  launch (device sends a *public* key; server stores it; subsequent records
+  signed with the *private* counterpart over the same canonical fields).
 - **Root + active debug.** A fully privileged on-device attacker can read
   memory while the DB is open. This is true of any encrypted DB; we do not
   claim TEE-equivalent runtime protection.

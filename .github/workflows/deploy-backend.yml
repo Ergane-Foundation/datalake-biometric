@@ -1,0 +1,88 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    # Auto-deploy only when backend code or the workflow itself changes,
+    # so app-only PRs don't burn AWS API calls.
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  # Manual trigger from the GitHub Actions UI — useful for re-deploying
+  # without code changes, or for the very first deploy after secrets land.
+  workflow_dispatch:
+
+# Opt JavaScript actions into Node.js 24 (matches ci.yml).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+# Don't pile up redundant deploys when commits land back-to-back.
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM validate
+        working-directory: backend
+        run: sam validate --lint
+
+      - name: SAM build
+        working-directory: backend
+        run: sam build --use-container=false
+
+      - name: SAM deploy
+        working-directory: backend
+        run: sam deploy --no-progressbar
+
+      - name: Print API URL
+        working-directory: backend
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name datalake-biometric \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+          echo "### Sync endpoint deployed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "$API_URL" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Copy this into \`example/src/config.ts\` (\`SYNC_ENDPOINT\`) and commit." >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke test (empty array)
+        working-directory: backend
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name datalake-biometric \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
+            --output text)
+          echo "POST $API_URL with an empty records array..."
+          curl -fsS -X POST "$API_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"records":[]}'
+          echo ""
