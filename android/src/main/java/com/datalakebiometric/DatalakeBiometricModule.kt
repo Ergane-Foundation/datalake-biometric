@@ -147,7 +147,7 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
         return
       }
 
-      val match = embeddingStore?.findMatch(embedding, 0.5f)
+      val match = embeddingStore?.findMatch(embedding, 0.65f)
 
       val result = WritableNativeMap().apply {
         if (match != null) {

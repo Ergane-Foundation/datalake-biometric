@@ -49,13 +49,22 @@ RCT_EXTERN_METHOD(
 )
 
 // ---------------------------------------------------------------------------
-// logAttendance(workerId, lat, lng, confidence) -> Promise<null>
+// logAndQueueAttendance(workerId, latitude, longitude, confidence) -> Promise<boolean>
 // ---------------------------------------------------------------------------
 RCT_EXTERN_METHOD(
-  logAttendance:(NSString *)workerId
-  lat:(double)lat
-  lng:(double)lng
+  logAndQueueAttendance:(NSString *)workerId
+  latitude:(double)latitude
+  longitude:(double)longitude
   confidence:(double)confidence
+  resolve:(RCTPromiseResolveBlock)resolve
+  reject:(RCTPromiseRejectBlock)reject
+)
+
+// ---------------------------------------------------------------------------
+// checkLiveness(landmarks) -> Promise<{isLive, isBlink, blinkCount, earValue}>
+// ---------------------------------------------------------------------------
+RCT_EXTERN_METHOD(
+  checkLiveness:(NSArray *)landmarks
   resolve:(RCTPromiseResolveBlock)resolve
   reject:(RCTPromiseRejectBlock)reject
 )

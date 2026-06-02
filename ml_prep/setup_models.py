@@ -1,8 +1,8 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Setup TFLite models for datalake-biometric.
 
-Downloads BlazeFace, MobileFaceNet (INT8), and Face Mesh into:
+Downloads BlazeFace and MobileFaceNet into:
   android/src/main/assets/models/
 
 Usage:
@@ -18,20 +18,43 @@ OUTPUT_DIR = SCRIPT_DIR / ".." / "android" / "src" / "main" / "assets" / "models
 
 MODELS = [
     {
-        "url": "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+        "url": (
+            "https://storage.googleapis.com/mediapipe-models/face_detector/"
+            "blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+        ),
         "filename": "blazeface.tflite",
-        "description": "Face detection and alignment to 112x112",
+        "description": "Face detection (BlazeFace short-range, ~0.22 MB)",
     },
     {
-        "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker_lite/float16/1/face_landmarker_lite.tflite",
-        "filename": "face_mesh.tflite",
-        "description": "468 facial landmarks for liveness detection",
-    },
-    {
-        "url": "https://storage.googleapis.com/tfhub-modules/google/imagenet/mobilenet_v2_100_224/feature_vector/5.tar.gz",
+        # MobileFaceNet trained for face recognition (112x112 -> embedding vector).
+        # The model bundled in the verified build (BENCHMARKS.md) is the one from
+        # MCarlomagno/FaceRecognitionAuth; download it manually if the URL below
+        # has moved, following the instructions printed on failure.
+        "url": (
+            "https://github.com/MCarlomagno/FaceRecognitionAuth/raw/refs/heads/master/"
+            "android/app/src/main/assets/mobilefacenet.tflite"
+        ),
         "filename": "mobilefacenet_int8.tflite",
-        "description": "512-dim embedding generation (INT8 quantized)",
-        "alt_url": "https://github.com/google/mediapipe/raw/master/mediapipe/models/face_geometry/face_geometry.tflite"
+        "description": "Face embedding -- MobileFaceNet 112x112 (~5 MB)",
+        "manual_instructions": (
+            "Download MobileFaceNet manually:\n"
+            "  Option A: https://github.com/MCarlomagno/FaceRecognitionAuth "
+            "(android/app/src/main/assets/mobilefacenet.tflite)\n"
+            "  Option B: convert from https://github.com/sirius-ai/MobileFaceNet_TF "
+            "using tf.lite.TFLiteConverter\n"
+            "Place the file at: android/src/main/assets/models/mobilefacenet_int8.tflite"
+        ),
+    },
+    {
+        # face_mesh is not loaded at runtime (liveness runs in JS via ML Kit).
+        # Download the lite variant so the asset reference resolves at build time
+        # without pulling in the full 3 MB task file.
+        "url": (
+            "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+            "face_landmarker_lite/float16/1/face_landmarker_lite.tflite"
+        ),
+        "filename": "face_mesh.tflite",
+        "description": "Face mesh landmarks -- unused at runtime (JS liveness path)",
     },
 ]
 
@@ -56,19 +79,10 @@ def download_model(url: str, dest: Path) -> float:
     return size_mb
 
 
-def create_stub_model(dest: Path) -> float:
-    """Create a minimal stub TFLite model file for build purposes."""
-    # Minimal valid TFLite file header (just enough for build to pass)
-    stub_data = b'\x1c\x00\x00\x00TFLite\x00\x00\x00\x00\x00\x00\x00\x00' + b'\x00' * 100
-    dest.write_bytes(stub_data)
-    size_mb = dest.stat().st_size / (1024 * 1024)
-    return size_mb
-
-
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print("\n" + "=" * 70)
-    print("ðŸ§  Datalake Biometric - Model Setup")
+    print("Datalake Biometric - Model Setup")
     print("=" * 70)
     print(f"\nTarget: {OUTPUT_DIR.resolve()}\n")
 
@@ -77,58 +91,42 @@ def main():
 
     for model in MODELS:
         dest = OUTPUT_DIR / model["filename"]
-        
+
         if dest.exists():
             size_mb = dest.stat().st_size / (1024 * 1024)
-            print(f"âœ“ {model['filename']} ({size_mb:.2f} MB) - exists")
+            print(f"OK  {model['filename']} ({size_mb:.2f} MB) - already present")
             total_mb += size_mb
             success += 1
             continue
-        
-        print(f"ðŸ“¥ Downloading {model['filename']}")
+
+        print(f"Downloading {model['filename']}")
         print(f"   {model['description']}")
-        
-        # Try primary URL
+        print(f"   URL: {model['url']}")
+
         try:
             mb = download_model(model["url"], dest)
             total_mb += mb
-            print(f"âœ“ OK\n")
-            success += 1
-            continue
-        except Exception as e:
-            print(f"\n   âš ï¸  Primary URL failed: {type(e).__name__}")
-        
-        # Try alternate URL if available
-        if "alt_url" in model:
-            print(f"   Trying alternative URL...")
-            try:
-                mb = download_model(model["alt_url"], dest)
-                total_mb += mb
-                print(f"âœ“ OK (from alternative source)\n")
-                success += 1
-                continue
-            except Exception as e:
-                print(f"   âš ï¸  Alternate URL failed: {type(e).__name__}")
-        
-        # Create stub if both URLs fail
-        print(f"   Creating stub model for build...")
-        try:
-            mb = create_stub_model(dest)
-            total_mb += mb
-            print(f"âš ï¸  STUB ({mb:.2f} MB) - for build only, not functional\n")
+            print(f"OK\n")
             success += 1
         except Exception as e:
-            print(f"\nâœ— FAILED: {e}\n")
+            print(f"\nFAILED: {type(e).__name__}: {e}")
+            if "manual_instructions" in model:
+                print(f"\n  {model['manual_instructions']}\n")
+            else:
+                print(f"  Please download {model['filename']} manually and place it in:")
+                print(f"  {dest}\n")
 
     print("=" * 70)
-    print(f"âœ“ {success}/{len(MODELS)} models ready ({total_mb:.2f} MB)")
+    print(f"{success}/{len(MODELS)} models ready ({total_mb:.2f} MB)")
     print("=" * 70)
-    
+
     if success == len(MODELS):
-        print("\nâœ… All models ready for Android build!\n")
+        print("\nAll models ready for Android build!\n")
     else:
-        print(f"\nâš ï¸  {len(MODELS) - success} model(s) failed to download.")
-        print("Check internet connection or URLs above.\n")
+        failed = len(MODELS) - success
+        print(f"\n{failed} model(s) failed to download.")
+        print("Fix the URLs above or download manually before building.\n")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -33,7 +33,10 @@ class LivenessEngine {
         earHistory.addLast(avgEAR)
 
         val isEyeClosed = avgEAR < EAR_THRESHOLD
-        val isBlink = !wasEyeClosed && isEyeClosed
+        // Count a blink on the re-open transition (closed → open), not on close.
+        // This matches the JS ML Kit state machine and prevents a static
+        // closed-eye photo from producing unbounded blink counts.
+        val isBlink = wasEyeClosed && !isEyeClosed
         if (isBlink) blinkCount++
         wasEyeClosed = isEyeClosed
 

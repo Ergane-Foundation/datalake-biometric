@@ -65,7 +65,7 @@ Base64 Image
     â†“
 [MobileFaceNet INT8] â†’ Generate 512-dim L2-normalized embedding
     â†“
-[Cosine Similarity] â†’ Match against enrolled embeddings (threshold: 0.6)
+[Cosine Similarity] â†’ Match against enrolled embeddings (threshold: 0.65)
     â†“
 Result: MATCH | NO_MATCH | POOR_QUALITY | NO_FACE
 ```
@@ -337,18 +337,45 @@ aws dynamodb scan \
 ## Known Limitations & TODOs
 
 ### Current Limitations
-- âŒ iOS not implemented (Swift stub only)
-- âŒ No SQLCipher database encryption yet
-- âŒ No multi-face enrollment (single subject per device)
-- âš ï¸ MobileFaceNet INT8 requires manual download
+- Models are not committed to git (git-ignored). Run 
+======================================================================
+Datalake Biometric - Model Setup
+======================================================================
+
+Target: <local path>
+
+OK  blazeface.tflite (0.22 MB) - already present
+Downloading mobilefacenet_int8.tflite
+   Face embedding -- MobileFaceNet 112x112 (~5 MB)
+   URL: https://github.com/MCarlomagno/FaceRecognitionAuth/raw/master/android/app/src/main/assets/mobilefacenet.tflite
+
+FAILED: HTTPError: HTTP Error 404: Not Found
+  Please download mobilefacenet_int8.tflite manually and place it in:
+  <local path>
+
+Downloading face_mesh.tflite
+   Face mesh landmarks -- unused at runtime (JS liveness path)
+   URL: https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker_lite/float16/1/face_landmarker_lite.tflite
+
+FAILED: HTTPError: HTTP Error 404: Not Found
+  Please download face_mesh.tflite manually and place it in:
+  <local path>
+
+======================================================================
+1/3 models ready (0.22 MB)
+======================================================================
+
+2 model(s) failed to download.
+Fix the URLs above or download manually before building. before building.
+- Server-side HMAC verification is intentionally skipped in this build (the device key never leaves the Keystore). See SECURITY.md for the production hardening path.
+- Open sync endpoint: no API Gateway authorizer. Add a Cognito or Lambda authorizer before production deployment.
+- Single embedding per worker ID; re-enrolling overwrites the previous embedding.
 
 ### Roadmap
-1. **Priority 2**: SQLCipher encryption for embeddings
-2. **Priority 3**: iOS native implementation
-3. **Priority 4**: Multi-face enrollment per device
-4. **Priority 5**: Batch verification (1-N matching optimization)
-5. **Priority 6**: Federated learning for continuous model improvement
-
+1. Per-device JWT handshake for server-side HMAC verification.
+2. Multi-embedding enrollment (store N clusters, vote at verify time).
+3. Batch 1-N matching optimisation (FAISS/HNSW index for large rosters).
+4. Evaluate and improve accuracy across diverse demographics and outdoor lighting.
 ---
 
 ## Troubleshooting

@@ -157,9 +157,10 @@ final class EmbeddingStore {
     var results: [(workerId: String, embedding: [Float])] = []
 
     while sqlite3_step(stmt) == SQLITE_ROW {
-      let workerId = String(cString: sqlite3_column_text(stmt, 1))
-      let blobPtr  = sqlite3_column_blob(stmt, 2)
-      let blobSize = sqlite3_column_bytes(stmt, 2)
+      // SELECT worker_id, embedding → result column 0 = worker_id, 1 = embedding.
+      let workerId = String(cString: sqlite3_column_text(stmt, 0))
+      let blobPtr  = sqlite3_column_blob(stmt, 1)
+      let blobSize = sqlite3_column_bytes(stmt, 1)
 
       if let blobPtr = blobPtr, blobSize > 0 {
         let count = Int(blobSize) / MemoryLayout<Float>.size
@@ -413,6 +414,63 @@ final class LivenessTracker {
     history      = []
     lastEyeState = true
   }
+
+  // MARK: evaluateEAR (MediaPipe 468-landmark path)
+
+  /// Accepts the full 468-point MediaPipe Face Mesh landmark array (each point is
+  /// [x, y, z] in normalised image coords) and returns the current liveness state.
+  /// Uses the same eye-corner indices and EAR formula as LivenessEngine.kt so both
+  /// platforms behave identically when the native checkLiveness() path is used.
+  func evaluateEAR(landmarks: [[Float]]) -> (isLive: Bool, isBlink: Bool, blinkCount: Int, earValue: Float) {
+    let leftIdx  = [362, 385, 387, 263, 373, 380]
+    let rightIdx = [33,  160, 158, 133, 153, 144]
+
+    let earLeft  = earFromIndices(landmarks, leftIdx)
+    let earRight = earFromIndices(landmarks, rightIdx)
+    let avg      = (earLeft + earRight) / 2.0
+
+    let eyesOpen = avg >= EAR_THRESHOLD
+    // Count blink on the re-open transition (closed → open), not on close.
+    let isBlink  = !lastEyeState && eyesOpen
+    if isBlink { blinkCount += 1 }
+    lastEyeState = eyesOpen
+
+    history.append((eyesOpen: eyesOpen, timestamp: Date()))
+    if history.count > 30 { history.removeFirst(history.count - 30) }
+
+    // Require both a minimum blink count AND non-trivial EAR variance.
+    // A looped video of someone blinking has very low EAR variance across
+    // repeated cycles; a real eye has micro-variation every frame.
+    let earVariance = computeEARVariance()
+    let isLive = blinkCount >= BLINK_MIN && earVariance > 0.0005
+    return (isLive, isBlink, blinkCount, avg)
+  }
+
+  private func computeEARVariance() -> Float {
+    guard !history.isEmpty else { return 0 }
+    // Approximate variance using the eyesOpen bool as 0/1 signal.
+    // A looped video has a fixed open/closed pattern → very low variance.
+    let vals = history.map { $0.eyesOpen ? Float(1) : Float(0) }
+    let mean = vals.reduce(0, +) / Float(vals.count)
+    return vals.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(vals.count)
+  }
+
+  // MARK: - Private EAR helpers
+
+  private func earFromIndices(_ lm: [[Float]], _ idx: [Int]) -> Float {
+    guard idx.count == 6 else { return 0 }
+    let p = idx.map { i -> [Float] in i < lm.count ? lm[i] : [0, 0, 0] }
+    let h = eucl(p[0], p[3])
+    guard h > 0 else { return 0 }
+    // EAR = (dist(p1,p5) + dist(p2,p4)) / (2 * dist(p0,p3))
+    return (eucl(p[1], p[5]) + eucl(p[2], p[4])) / (2 * h)
+  }
+
+  private func eucl(_ a: [Float], _ b: [Float]) -> Float {
+    let dx = (a.count > 0 ? a[0] : 0) - (b.count > 0 ? b[0] : 0)
+    let dy = (a.count > 1 ? a[1] : 0) - (b.count > 1 ? b[1] : 0)
+    return sqrt(dx * dx + dy * dy)
+  }
 }
 
 // MARK: - DatalakeBiometric (React Native Bridge)
@@ -501,6 +559,10 @@ class DatalakeBiometric: NSObject {
       }
       let n = Float(embeddings.count)
       avg = avg.map { $0 / n }
+      // Re-normalise after averaging so the stored vector is unit-length.
+      // Without this the cosine dot-product is no longer bounded [0, 1].
+      let mag = sqrt(avg.reduce(0) { $0 + $1 * $1 })
+      if mag > 0 { avg = avg.map { $0 / mag } }
 
       self.store.insertEmbedding(workerId: workerId, embedding: avg)
       resolve(["success": true, "framesUsed": frames.count])
@@ -543,7 +605,7 @@ class DatalakeBiometric: NSObject {
         }
       }
 
-      let THRESHOLD = 0.75
+      let THRESHOLD = 0.65
       if bestScore > THRESHOLD {
         resolve([
           "status":     "MATCH",
@@ -556,12 +618,12 @@ class DatalakeBiometric: NSObject {
     }
   }
 
-  // MARK: - logAttendance
+  // MARK: - logAndQueueAttendance
 
-  @objc func logAttendance(
+  @objc func logAndQueueAttendance(
     _ workerId: String,
-    lat: Double,
-    lng: Double,
+    latitude: Double,
+    longitude: Double,
     confidence: Double,
     resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
@@ -574,15 +636,49 @@ class DatalakeBiometric: NSObject {
 
       let id        = UUID().uuidString
       let ts        = Int64(Date().timeIntervalSince1970 * 1000)
-      let record    = "\(workerId)|\(ts)|\(lat)|\(lng)|\(confidence)"
+      let record    = "\(workerId)|\(ts)|\(latitude)|\(longitude)|\(confidence)"
       let signature = self.keyVault.signRecord(record)
 
       self.store.insertAttendance(
         id: id, workerId: workerId, timestamp: ts,
-        lat: lat, lng: lng, confidence: confidence,
+        lat: latitude, lng: longitude, confidence: confidence,
         signature: signature
       )
-      resolve(NSNull())
+      resolve(true)
+    }
+  }
+
+  // MARK: - checkLiveness
+
+  @objc func checkLiveness(
+    _ landmarks: NSArray,
+    resolve: @escaping RCTPromiseResolveBlock,
+    reject: @escaping RCTPromiseRejectBlock
+  ) {
+    queue.async { [weak self] in
+      guard let self = self else { return }
+
+      // Convert NSArray<NSArray<NSNumber>> → [[Float]]
+      let pts: [[Float]] = (landmarks as? [[NSNumber]] ?? []).map { pt in
+        [
+          pt.count > 0 ? pt[0].floatValue : 0,
+          pt.count > 1 ? pt[1].floatValue : 0,
+          pt.count > 2 ? pt[2].floatValue : 0,
+        ]
+      }
+
+      guard pts.count >= 468 else {
+        resolve(["isLive": false, "isBlink": false, "blinkCount": 0, "earValue": 0.0])
+        return
+      }
+
+      let result = self.liveness.evaluateEAR(landmarks: pts)
+      resolve([
+        "isLive":     result.isLive,
+        "isBlink":    result.isBlink,
+        "blinkCount": result.blinkCount,
+        "earValue":   result.earValue,
+      ])
     }
   }
 
