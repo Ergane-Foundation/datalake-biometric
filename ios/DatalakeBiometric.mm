@@ -71,24 +71,20 @@ RCT_EXTERN_METHOD(
 
 // ---------------------------------------------------------------------------
 // getPendingAttendanceRecords() -> Promise<Array<Record>>
-// JS-facing name is `getPendingAttendanceRecords` (matches Android Kotlin
-// override and the TurboModule spec). The underlying Swift method is
-// `getPendingRecords` — REMAP keeps the bridge surface aligned across
-// platforms without renaming the Swift implementation.
+// JS-facing name matches Android Kotlin override and the TurboModule spec.
+// Swift exposes the same name via @objc.
 // ---------------------------------------------------------------------------
-RCT_EXTERN_REMAP_METHOD(
-  getPendingAttendanceRecords,
-  getPendingRecords:(RCTPromiseResolveBlock)resolve
+RCT_EXTERN_METHOD(
+  getPendingAttendanceRecords:(RCTPromiseResolveBlock)resolve
   reject:(RCTPromiseRejectBlock)reject
 )
 
 // ---------------------------------------------------------------------------
 // markRecordsSynced(ids) -> Promise<null>
-// JS-facing name aligned with Android + spec; Swift method is `markSynced`.
+// JS-facing name matches Android + spec; Swift exposes the same name via @objc.
 // ---------------------------------------------------------------------------
-RCT_EXTERN_REMAP_METHOD(
-  markRecordsSynced,
-  markSynced:(NSArray<NSString *> *)ids
+RCT_EXTERN_METHOD(
+  markRecordsSynced:(NSArray<NSString *> *)ids
   resolve:(RCTPromiseResolveBlock)resolve
   reject:(RCTPromiseRejectBlock)reject
 )

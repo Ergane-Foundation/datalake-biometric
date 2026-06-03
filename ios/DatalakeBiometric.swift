@@ -690,9 +690,9 @@ class DatalakeBiometric: NSObject {
     }
   }
 
-  // MARK: - getPendingRecords
+  // MARK: - getPendingAttendanceRecords
 
-  @objc func getPendingRecords(
+  @objc func getPendingAttendanceRecords(
     _ resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
@@ -702,9 +702,9 @@ class DatalakeBiometric: NSObject {
     }
   }
 
-  // MARK: - markSynced
+  // MARK: - markRecordsSynced
 
-  @objc func markSynced(
+  @objc func markRecordsSynced(
     _ ids: [String],
     resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
