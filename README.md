@@ -33,7 +33,7 @@ const result = await BiometricSDK.enrollWorker('W-1042', [frame1, frame2, frame3
 
 // 3. Verify — 1-N matching; returns MATCH | NO_MATCH | POOR_QUALITY | NO_FACE
 const verify = await BiometricSDK.verifyWorker(base64Frame);
-// → { status: 'MATCH', workerId: 'W-1042', confidence: 0.82, inferenceMs: 32, totalMs: 435 }
+// → { status: 'MATCH', workerId: 'W-1042', confidence: 0.96, inferenceMs: 33, totalMs: 510 }
 
 // 4. Liveness — native EAR blink counter for 468-point MediaPipe landmarks
 const liveness = await BiometricSDK.checkLiveness(landmarks);

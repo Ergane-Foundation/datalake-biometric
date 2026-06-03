@@ -50,24 +50,26 @@ running while a single user (DHRUV) Verified repeatedly on a real device.
 
 | Device              | Android | SoC                  | inferenceMs | totalMs |
 |---------------------|---------|----------------------|-------------|---------|
-| Samsung Galaxy A17 (SM-A176B) | 14 (compile target API 36) | Exynos 1330 (mid-range) | **28–32 ms** | **413–576 ms** |
+| Samsung Galaxy A17 (SM-A176B) | 14 (compile target API 36) | Exynos 1330 (mid-range) | **28–33 ms** | **413–576 ms** |
 
 ### Latest measured Verify (2026-06-03)
 
-Taken directly from the Benchmark screen after a multi-challenge MATCH cycle:
+Taken directly from the Benchmark screen after a multi-challenge MATCH cycle.
+The Benchmark screen reports the most recent `verifyWorker` invocation:
 
 | Field        | Value         |
 |--------------|---------------|
 | Status       | MATCH         |
-| Worker       | DHRUVVVV      |
-| Confidence   | 82.3 %        |
-| Inference    | **32 ms**     |
-| Total pipeline | **435 ms**  |
-| Quality      | **0.88**      |
+| Inference    | **33 ms**     |
+| Total pipeline | **510 ms**  |
+| Quality      | **0.77**      |
+| Pending sync | 4 records (offline queue) |
 
-A second concurrent enrolled worker (DG01) on the same device reported MATCH at
-77.1 % confidence, 31 ms inference, 432 ms total, 0.82 quality on the same
-session — confirming sub-second end-to-end well under the 1000 ms target.
+A separate verification cycle on the same device, captured from the Verify
+result card, reported MATCH for `TEST_USER` at **96.2 %** cosine confidence
+with **30 ms** inference and **443 ms** total pipeline — well within the
+sub-second budget and showing the same-person cosine landing in the high band
+of the 0.56–0.96 expected range.
 
 Per-stage breakdown (Welford-averaged across 4 warm Verify runs, derived from
 adb log timestamps + the in-app counters):
@@ -78,7 +80,7 @@ adb log timestamps + the in-app counters):
 | `downscaleForProcessing` (12 MP → 540×720) | ~1 ms |
 | `scoreQuality` (256×256 streaming Welford) | ~5 ms |
 | `detectAndCrop` (MLKit hint → 112×112)     | ~1 ms |
-| `embed` (MobileFaceNet TFLite + XNNPACK)   | **28–32 ms** |
+| `embed` (MobileFaceNet TFLite + XNNPACK)   | **28–33 ms** |
 | `findMatch` over 2 enrolled embeddings     | <1 ms |
 | **Total pipeline (`totalMs`)** | **413–576 ms** |
 
@@ -89,7 +91,7 @@ Notes:
   base64 arrives) runs in **~50 ms**.
 - Quality scores (`scoreQuality` blended blur+exposure) are **0.77–0.89** in
   normal indoor light — well above the 0.5 POOR_QUALITY threshold; the latest
-  Verify cycle clocked **0.88**.
+  Verify cycle clocked **0.77**.
 - Match similarity (cosine) for the same person across pose/expression:
   **0.56–0.96** (threshold 0.65 → MATCH). For a different face: **0.012**
   (well below threshold → NO_MATCH). Spoof rejection works at the liveness
