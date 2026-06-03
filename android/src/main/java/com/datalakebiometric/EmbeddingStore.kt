@@ -188,6 +188,11 @@ class EmbeddingStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null
         )
     }
 
+    /** Deletes all records that have already been synced to AWS, satisfying the local-purge requirement. */
+    fun purgeSynced() {
+        db.execSQL("DELETE FROM attendance_log WHERE synced=1")
+    }
+
     private fun floatArrayToBytes(floats: FloatArray): ByteArray {
         val buffer = ByteBuffer.allocate(floats.size * 4).order(ByteOrder.nativeOrder())
         floats.forEach { buffer.putFloat(it) }

@@ -9,7 +9,7 @@ import {
 import { Camera } from 'react-native-vision-camera';
 import { BiometricSDK, type VerifyResult } from 'datalake-biometric';
 import { FaceCamera } from '../FaceCamera';
-import { useFaceState, takePhotoBase64 } from '../camera';
+import { useFaceState, takePhotoBase64, type LivenessChallenge } from '../camera';
 import { useTheme, type ThemeColors } from '../ThemeContext';
 import { s } from '../theme';
 import type { Screen } from '../types';
@@ -28,16 +28,40 @@ const LIVENESS_TIMEOUT_MS = 12000;
 const LAT = 10.0;
 const LNG = 20.0;
 
+const CHALLENGES: LivenessChallenge[] = ['blink', 'smile', 'turn'];
+
+function pickChallenge(): LivenessChallenge {
+  return CHALLENGES[Math.floor(Math.random() * CHALLENGES.length)] as LivenessChallenge;
+}
+
+function getChallengeInstruction(challenge: LivenessChallenge): string {
+  switch (challenge) {
+    case 'blink': return 'Blink twice to prove you are live';
+    case 'smile': return 'Smile to prove you are live';
+    case 'turn':  return 'Turn your head left or right';
+  }
+}
+
 export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
   const { colors } = useTheme();
   const camera = useRef<Camera>(null);
-  const { frameProcessor, faceInFrame, blinkCount, reset, getLastHint } =
-    useFaceState();
+  const {
+    frameProcessor,
+    faceInFrame,
+    blinkCount,
+    smileDetected,
+    headTurned,
+    reset,
+    getLastHint,
+  } = useFaceState();
 
   const [phase, setPhase] = useState<Phase>('scanning');
   const [result, setResult] = useState<VerifyResult | null>(null);
   const phaseRef = useRef<Phase>('scanning');
   phaseRef.current = phase;
+
+  // Pick a random challenge once per session; re-pick on retry.
+  const [challenge, setChallenge] = useState<LivenessChallenge>(pickChallenge);
 
   const runVerify = useCallback(async () => {
     if (!camera.current) return;
@@ -68,12 +92,15 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
     }
   }, [getLastHint, onResult]);
 
-  // Trigger verification once liveness (2 blinks) is proven.
+  // Trigger verification once the active liveness challenge is completed.
   useEffect(() => {
-    if (phase === 'scanning' && blinkCount >= REQUIRED_BLINKS) {
-      runVerify();
-    }
-  }, [blinkCount, phase, runVerify, getLastHint]);
+    if (phase !== 'scanning') return;
+    const met =
+      challenge === 'blink' ? blinkCount >= REQUIRED_BLINKS :
+      challenge === 'smile' ? smileDetected :
+      headTurned;
+    if (met) runVerify();
+  }, [blinkCount, smileDetected, headTurned, phase, challenge, runVerify]);
 
   // Liveness timeout -> treat as spoof / no live face.
   useEffect(() => {
@@ -87,6 +114,7 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
   const retry = () => {
     reset();
     setResult(null);
+    setChallenge(pickChallenge());
     setPhase('scanning');
   };
 
@@ -97,7 +125,7 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
     >
       <Text style={[s.title, { color: colors.text }]}>Verify + Liveness</Text>
       <Text style={[s.subtitle, { color: colors.textDim }]}>
-        Blink twice to prove you are live
+        {getChallengeInstruction(challenge)}
       </Text>
 
       <FaceCamera
@@ -120,24 +148,56 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
           {(phase === 'scanning' || phase === 'verifying') && (
             <View style={styles.blinkBox}>
               <Text style={styles.blinkLabel}>
-                {phase === 'verifying' ? 'Matching…' : 'Blink twice'}
+                {phase === 'verifying' ? 'Matching…' : getChallengeLabel(challenge, blinkCount, smileDetected, headTurned)}
               </Text>
-              <View style={styles.dots}>
-                {Array.from({ length: REQUIRED_BLINKS }).map((_, i) => (
+              {challenge === 'blink' && (
+                <View style={styles.dots}>
+                  {Array.from({ length: REQUIRED_BLINKS }).map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.dot,
+                        {
+                          backgroundColor:
+                            i < blinkCount
+                              ? colors.success
+                              : 'rgba(255,255,255,0.3)',
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+              {challenge === 'smile' && (
+                <View style={styles.dots}>
                   <View
-                    key={i}
                     style={[
                       styles.dot,
+                      styles.dotLarge,
                       {
-                        backgroundColor:
-                          i < blinkCount
-                            ? colors.success
-                            : 'rgba(255,255,255,0.3)',
+                        backgroundColor: smileDetected
+                          ? colors.success
+                          : 'rgba(255,255,255,0.3)',
                       },
                     ]}
                   />
-                ))}
-              </View>
+                </View>
+              )}
+              {challenge === 'turn' && (
+                <View style={styles.dots}>
+                  <View
+                    style={[
+                      styles.dot,
+                      styles.dotLarge,
+                      {
+                        backgroundColor: headTurned
+                          ? colors.success
+                          : 'rgba(255,255,255,0.3)',
+                      },
+                    ]}
+                  />
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -157,8 +217,8 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
             ⛔ SPOOF / NO LIVENESS
           </Text>
           <Text style={[s.cardBody, { color: colors.textDim }]}>
-            No blink detected within {LIVENESS_TIMEOUT_MS / 1000}s. A printed
-            photo or video replay cannot pass liveness.
+            Challenge not completed within {LIVENESS_TIMEOUT_MS / 1000}s.
+            A printed photo or video replay cannot pass liveness.
           </Text>
         </View>
       )}
@@ -186,6 +246,19 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
       </TouchableOpacity>
     </ScrollView>
   );
+}
+
+function getChallengeLabel(
+  challenge: LivenessChallenge,
+  blinkCount: number,
+  smileDetected: boolean,
+  headTurned: boolean
+): string {
+  switch (challenge) {
+    case 'blink': return `Blink ${blinkCount}/${REQUIRED_BLINKS}`;
+    case 'smile': return smileDetected ? '😊 Smile detected!' : 'Hold your smile…';
+    case 'turn':  return headTurned    ? '✓ Head turned!'    : 'Turn head left or right…';
+  }
 }
 
 function ResultCard({
@@ -253,5 +326,10 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
     borderRadius: 8,
+  },
+  dotLarge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
   },
 });

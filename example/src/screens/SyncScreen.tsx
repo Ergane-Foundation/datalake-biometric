@@ -106,21 +106,24 @@ export default function SyncScreen({ navigate }: Props) {
 
           if (syncedIds.length > 0) {
             await BiometricSDK.markSynced(syncedIds);
+            // Purge synced records from local DB after server ACK (spec requirement).
+            await BiometricSDK.purgeSyncedRecords();
           }
 
           Alert.alert(
             failed > 0 ? 'Synced with errors' : 'Synced',
-            `${ok}/${ids.length} record(s) uploaded` +
+            `${ok}/${ids.length} record(s) uploaded & purged locally` +
               (failed > 0 ? `, ${failed} failed (will retry).` : '.')
           );
         } else {
-          // No endpoint configured — mark synced locally only so the offline /
+          // No endpoint configured — mark synced + purge locally so the offline /
           // sync flow can be demoed without AWS. Set SYNC_ENDPOINT in config.ts
           // after running deploy-backend.
           await BiometricSDK.markSynced(ids);
+          await BiometricSDK.purgeSyncedRecords();
           Alert.alert(
             'Synced (local only)',
-            `${ids.length} record(s) marked synced. ` +
+            `${ids.length} record(s) marked synced & purged. ` +
               'Set SYNC_ENDPOINT in src/config.ts to upload to AWS.'
           );
         }

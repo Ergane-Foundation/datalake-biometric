@@ -28,12 +28,13 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 
 jest.mock('datalake-biometric', () => ({
   BiometricSDK: {
-    initialize:        jest.fn().mockResolvedValue(true),
-    enrollWorker:      jest.fn().mockResolvedValue({ success: true, framesUsed: 3 }),
-    verifyWorker:      jest.fn().mockResolvedValue({ status: 'MATCH', confidence: 0.95 }),
-    logAttendance:     jest.fn().mockResolvedValue(undefined),
-    getPendingRecords: jest.fn().mockResolvedValue([]),
-    markSynced:        jest.fn().mockResolvedValue(undefined),
+    initialize:           jest.fn().mockResolvedValue(true),
+    enrollWorker:         jest.fn().mockResolvedValue({ success: true, framesUsed: 3 }),
+    verifyWorker:         jest.fn().mockResolvedValue({ status: 'MATCH', confidence: 0.95 }),
+    logAttendance:        jest.fn().mockResolvedValue(undefined),
+    getPendingRecords:    jest.fn().mockResolvedValue([]),
+    markSynced:           jest.fn().mockResolvedValue(undefined),
+    purgeSyncedRecords:   jest.fn().mockResolvedValue(true),
   },
 }));
 
@@ -104,12 +105,16 @@ describe('EnrollScreen', () => {
 describe('VerifyScreen', () => {
   afterEach(() => jest.useRealTimers());
 
-  test('shows blink instruction on mount', () => {
+  test('shows a liveness challenge instruction on mount', () => {
     render(
       <VerifyScreen navigate={jest.fn()} isActive={true} onResult={jest.fn()} />,
       { wrapper: Wrapper }
     );
-    expect(screen.getByText(/blink/i)).toBeTruthy();
+    // Challenge is randomized — one of blink / smile / turn must be shown.
+    const hasBlink = screen.queryByText(/blink/i) !== null;
+    const hasSmile = screen.queryByText(/smile/i) !== null;
+    const hasTurn  = screen.queryByText(/turn your head/i) !== null;
+    expect(hasBlink || hasSmile || hasTurn).toBe(true);
   });
 
   test('shows SPOOF after liveness timeout', async () => {

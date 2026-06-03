@@ -48,6 +48,8 @@ export interface Spec extends TurboModule {
   >;
 
   markRecordsSynced(recordIds: Array<string>): Promise<boolean>;
+
+  purgeSyncedRecords(): Promise<boolean>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('DatalakeBiometric');

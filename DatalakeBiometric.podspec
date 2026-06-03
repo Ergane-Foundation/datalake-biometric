@@ -10,9 +10,10 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.authors      = package["author"]
 
-  # Pinned to 15.5 to match example/ios/Podfile — required by
-  # GoogleMLKit/FaceDetection 8.0 (pulled in by react-native-vision-camera-face-detector).
-  s.platforms    = { :ios => '15.5' }
+  # The DatalakeBiometric native module (CoreML + SQLCipher) supports iOS 14.0+.
+  # Apps using the optional ML Kit liveness helper (react-native-vision-camera-face-detector)
+  # require iOS 15.5+ at the app target level.
+  s.platforms    = { :ios => '14.0' }
   s.source       = { :git => "https://github.com/vaani1127/datalake-biometric.git", :tag => "#{s.version}" }
 
   s.source_files = "ios/**/*.{h,m,mm,swift,cpp}"

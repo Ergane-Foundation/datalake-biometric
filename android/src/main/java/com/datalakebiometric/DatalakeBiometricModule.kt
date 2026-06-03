@@ -240,6 +240,16 @@ class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  @ReactMethod
+  override fun purgeSyncedRecords(promise: Promise) {
+    try {
+      embeddingStore?.purgeSynced()
+      promise.resolve(true)
+    } catch (e: Exception) {
+      promise.reject("PURGE_ERROR", e.message, e)
+    }
+  }
+
   // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private fun decodeBase64ToBitmap(base64: String): Bitmap? {

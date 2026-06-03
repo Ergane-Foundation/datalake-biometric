@@ -103,4 +103,9 @@ export const BiometricSDK = {
   markSynced(recordIds: string[]): Promise<boolean> {
     return DatalakeBiometric.markRecordsSynced(recordIds);
   },
+
+  /** Purges all already-synced records from the local encrypted DB (local data purge). */
+  purgeSyncedRecords(): Promise<boolean> {
+    return DatalakeBiometric.purgeSyncedRecords();
+  },
 };

@@ -252,6 +252,14 @@ final class EmbeddingStore {
     return sqlite3_step(stmt) == SQLITE_DONE
   }
 
+  // MARK: purgeSynced
+
+  /// Deletes all records that have already been synced, satisfying the local-purge requirement.
+  func purgeSynced() -> Bool {
+    guard let db = db else { return false }
+    return sqlite3_exec(db, "DELETE FROM attendance_log WHERE synced = 1;", nil, nil, nil) == SQLITE_OK
+  }
+
   deinit {
     if let db = db { sqlite3_close(db) }
   }
@@ -705,6 +713,19 @@ class DatalakeBiometric: NSObject {
       guard let self = self else { return }
       _ = self.store.markSynced(ids: ids)
       resolve(NSNull())
+    }
+  }
+
+  // MARK: - purgeSyncedRecords
+
+  @objc func purgeSyncedRecords(
+    _ resolve: @escaping RCTPromiseResolveBlock,
+    reject: @escaping RCTPromiseRejectBlock
+  ) {
+    queue.async { [weak self] in
+      guard let self = self else { return }
+      _ = self.store.purgeSynced()
+      resolve(true)
     }
   }
 

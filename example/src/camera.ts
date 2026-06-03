@@ -4,21 +4,29 @@ import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { useRunOnJS } from 'react-native-worklets-core';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 
+export type LivenessChallenge = 'blink' | 'smile' | 'turn';
+
 export type FaceState = {
   faceInFrame: boolean;
   eyesOpen: boolean;
   blinkCount: number;
+  smileDetected: boolean;
+  headTurned: boolean;
 };
 
 export type FaceHint = { nx: number; ny: number; nw: number; nh: number };
 
 const EYE_CLOSED = 0.3;
 const EYE_OPEN = 0.7;
+const SMILE_THRESHOLD = 0.7;
+const YAW_THRESHOLD = 20; // degrees
 
 /**
- * Live face + blink state driven by the Vision Camera frame processor.
- * Eye-open probabilities come from ML Kit (via the face detector) and a blink is
- * counted on an open -> closed -> open transition. Two blinks = liveness proof.
+ * Live face + multi-challenge liveness state driven by the Vision Camera frame processor.
+ *
+ * Blink:  counted on open → closed → open transition (2 blinks = liveness proof).
+ * Smile:  sticky flag set once smilingProbability > 0.7.
+ * Turn:   sticky flag set once abs(headEulerAngleY) > 20 degrees.
  *
  * The hook also stashes the most recent normalized face bounding box (0..1 coords)
  * — call `getLastHint()` when capturing a photo and pass it through to
@@ -30,6 +38,8 @@ export function useFaceState() {
     faceInFrame: false,
     eyesOpen: true,
     blinkCount: 0,
+    smileDetected: false,
+    headTurned: false,
   });
   const wasClosed = useRef(false);
   const lastHintRef = useRef<FaceHint | null>(null);
@@ -50,7 +60,9 @@ export function useFaceState() {
       nx: number,
       ny: number,
       nw: number,
-      nh: number
+      nh: number,
+      smiling: number,
+      yaw: number
     ) => {
       if (count === 0) {
         lastHintRef.current = null;
@@ -73,14 +85,21 @@ export function useFaceState() {
           blink = prev.blinkCount + 1;
         }
         const eyesOpen = !closed;
+
+        // Sticky flags — set once and stay true until reset()
+        const smileDetected = prev.smileDetected || smiling > SMILE_THRESHOLD;
+        const headTurned = prev.headTurned || Math.abs(yaw) > YAW_THRESHOLD;
+
         if (
           prev.faceInFrame &&
           prev.eyesOpen === eyesOpen &&
-          blink === prev.blinkCount
+          blink === prev.blinkCount &&
+          prev.smileDetected === smileDetected &&
+          prev.headTurned === headTurned
         ) {
           return prev;
         }
-        return { faceInFrame: true, eyesOpen, blinkCount: blink };
+        return { faceInFrame: true, eyesOpen, blinkCount: blink, smileDetected, headTurned };
       });
     },
     []
@@ -91,12 +110,12 @@ export function useFaceState() {
       'worklet';
       const faces = detectFaces(frame);
       if (!faces || faces.length === 0) {
-        onFace(0, 1, 1, 0, 0, 0, 0);
+        onFace(0, 1, 1, 0, 0, 0, 0, 0, 0);
         return;
       }
       const f = faces[0];
       if (!f) {
-        onFace(0, 1, 1, 0, 0, 0, 0);
+        onFace(0, 1, 1, 0, 0, 0, 0, 0, 0);
         return;
       }
       const left =
@@ -107,6 +126,10 @@ export function useFaceState() {
         typeof f.rightEyeOpenProbability === 'number'
           ? f.rightEyeOpenProbability
           : 1;
+      const smiling =
+        typeof f.smilingProbability === 'number' ? f.smilingProbability : 0;
+      const yaw =
+        typeof f.headEulerAngleY === 'number' ? f.headEulerAngleY : 0;
       const fw = frame.width;
       const fh = frame.height;
       const b = f.bounds;
@@ -118,7 +141,7 @@ export function useFaceState() {
       const ny = fh > 0 ? b.y / fh : 0;
       const nw = fw > 0 ? b.width / fw : 0;
       const nh = fh > 0 ? b.height / fh : 0;
-      onFace(faces.length, left, right, nx, ny, nw, nh);
+      onFace(faces.length, left, right, nx, ny, nw, nh, smiling, yaw);
     },
     [detectFaces, onFace]
   );
@@ -126,7 +149,7 @@ export function useFaceState() {
   const reset = useCallback(() => {
     wasClosed.current = false;
     lastHintRef.current = null;
-    setState({ faceInFrame: false, eyesOpen: true, blinkCount: 0 });
+    setState({ faceInFrame: false, eyesOpen: true, blinkCount: 0, smileDetected: false, headTurned: false });
   }, []);
 
   const getLastHint = useCallback(() => lastHintRef.current, []);

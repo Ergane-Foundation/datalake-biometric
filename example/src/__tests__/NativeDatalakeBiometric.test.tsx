@@ -4,12 +4,13 @@ import { BiometricSDK } from 'datalake-biometric';
 jest.mock('react-native', () => ({
   NativeModules: {
     DatalakeBiometric: {
-      initialize:                  jest.fn(),
-      enrollWorker:                jest.fn(),
-      verifyWorker:                jest.fn(),
-      logAttendance:               jest.fn(),
-      getPendingRecords:           jest.fn(),
-      markSynced:                  jest.fn(),
+      initialize:             jest.fn(),
+      enrollWorker:           jest.fn(),
+      verifyWorker:           jest.fn(),
+      logAttendance:          jest.fn(),
+      getPendingRecords:      jest.fn(),
+      markSynced:             jest.fn(),
+      purgeSyncedRecords:     jest.fn(),
     },
   },
   Platform: { OS: 'android' },
@@ -17,12 +18,13 @@ jest.mock('react-native', () => ({
 
 jest.mock('datalake-biometric', () => ({
   BiometricSDK: {
-    initialize:        jest.fn(),
-    enrollWorker:      jest.fn(),
-    verifyWorker:      jest.fn(),
-    logAttendance:     jest.fn(),
-    getPendingRecords: jest.fn(),
-    markSynced:        jest.fn(),
+    initialize:           jest.fn(),
+    enrollWorker:         jest.fn(),
+    verifyWorker:         jest.fn(),
+    logAttendance:        jest.fn(),
+    getPendingRecords:    jest.fn(),
+    markSynced:           jest.fn(),
+    purgeSyncedRecords:   jest.fn(),
   },
 }));
 
@@ -85,6 +87,13 @@ describe('BiometricSDK', () => {
     mock.mockResolvedValue(undefined);
     await BiometricSDK.markSynced(['rec-1', 'rec-2']);
     expect(mock).toHaveBeenCalledWith(['rec-1', 'rec-2']);
+  });
+
+  test('purgeSyncedRecords() resolves true', async () => {
+    (BiometricSDK.purgeSyncedRecords as jest.Mock).mockResolvedValue(true);
+    const result = await BiometricSDK.purgeSyncedRecords();
+    expect(result).toBe(true);
+    expect(BiometricSDK.purgeSyncedRecords).toHaveBeenCalledTimes(1);
   });
 });
 
