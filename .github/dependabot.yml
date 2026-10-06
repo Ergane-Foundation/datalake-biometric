@@ -1,4 +1,6 @@
-# Weekly dependency update pull requests, grouped to keep the number small.
+# Weekly dependency updates. Per ecosystem, all minor and patch updates arrive as
+# one grouped pull request; major updates stay separate so each can be reviewed
+# on its own.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -8,8 +10,8 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies, js]
     groups:
-      dev-tooling:
-        dependency-type: development
+      npm-minor-and-patch:
+        patterns: ['*']
         update-types: [minor, patch]
 
   - package-ecosystem: gradle
@@ -18,8 +20,17 @@ updates:
       - /example/android
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     labels: [dependencies, android]
+    groups:
+      gradle-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
+    ignore:
+      # LiteRT 2.x requires Kotlin 2.3 in every app that uses the SDK; stay on 1.x
+      # until that is acceptable (see android/build.gradle).
+      - dependency-name: com.google.ai.edge.litert:litert
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directories:
@@ -27,13 +38,20 @@ updates:
       - /.github/actions/setup
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
     labels: [dependencies, ci]
     groups:
-      actions:
+      actions-minor-and-patch:
         patterns: ['*']
+        update-types: [minor, patch]
 
   - package-ecosystem: pip
     directory: /backend
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
     labels: [dependencies, backend]
+    groups:
+      pip-minor-and-patch:
+        patterns: ['*']
+        update-types: [minor, patch]
