@@ -1,4 +1,4 @@
-﻿import { fixupConfigRules } from '@eslint/compat';
+import { fixupConfigRules } from '@eslint/compat';
 import { FlatCompat } from '@eslint/eslintrc';
 import js from '@eslint/js';
 import prettier from 'eslint-plugin-prettier';
@@ -24,6 +24,16 @@ export default defineConfig([
     },
   },
   {
-    ignores: ['node_modules/', 'lib/', 'example/'],
+    ignores: [
+      '**/node_modules/',
+      '**/build/',
+      '**/dist/',
+      'lib/',
+      'coverage/',
+      'ml_prep/.cache/',
+      '.turbo/',
+      'example/ios/Pods/',
+      'example/vendor/',
+    ],
   },
 ]);

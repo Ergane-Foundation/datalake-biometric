@@ -1,7 +1,6 @@
-﻿# OSX
+# OSX
 #
 .DS_Store
-.claude
 # XDE
 .expo/
 # VSCode
@@ -88,3 +87,23 @@ nitrogen/
 
 # Kotlin incremental compiler cache (per-module under android/)
 .kotlin/
+
+# Local assistant and editor settings
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# Archives
+*.zip
+
+# Build output
+dist/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Datasets and results from ml_prep scripts
+ml_prep/.cache/
