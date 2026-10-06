@@ -10,34 +10,27 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.authors      = package["author"]
 
-  # The DatalakeBiometric native module (CoreML + SQLCipher) supports iOS 14.0+.
-  # Apps using the optional ML Kit liveness helper (react-native-vision-camera-face-detector)
-  # require iOS 15.5+ at the app target level.
-  s.platforms    = { :ios => '14.0' }
-  s.source       = { :git => "https://github.com/vaani1127/datalake-biometric.git", :tag => "#{s.version}" }
+  # React Native 0.85's own minimum. The example app needs 15.5 because the
+  # ML Kit face detector it uses requires it; the library itself does not.
+  s.platforms    = { :ios => "15.1" }
+  # release-it tags releases as v<version>.
+  s.source       = { :git => "https://github.com/Ergane-Foundation/datalake-biometric.git", :tag => "v#{s.version}" }
 
   s.source_files = "ios/**/*.{h,m,mm,swift,cpp}"
-
-  # Swift ↔ Objective-C interop
   s.swift_version = "5.9"
 
-  # DEFINES_MODULE generates a module map for this pod, which is required so the
-  # Swift-generated "DatalakeBiometric-Swift.h" header (produced from
-  # ios/DatalakeBiometric.swift) is discoverable when DatalakeBiometric.mm
-  # imports it via #import "DatalakeBiometric-Swift.h". Without this flag the
-  # Swift compiler still produces the header but ObjC++ can't find it, so the
-  # @objc(DatalakeBiometric) class is "unknown type" and every RCT_EXTERN_MODULE
-  # / RCT_EXTERN_METHOD line fails to compile.
+  # DEFINES_MODULE gives the pod a module map, so the Swift class is visible
+  # to the Objective-C++ registration in DatalakeBiometric.mm at link time.
   s.pod_target_xcconfig = {
     "DEFINES_MODULE" => "YES",
     "SWIFT_VERSION" => "5.9"
   }
 
-  # SQLCipher — encrypted SQLite store for embeddings & attendance log
+  # Encrypted SQLite. The Swift code checks at runtime that SQLCipher, not the
+  # system SQLite, is linked, and refuses to open the database otherwise.
   s.dependency "SQLCipher"
 
-  # System frameworks used by DatalakeBiometric.swift
-  s.frameworks = "Foundation", "Vision", "CoreML", "Security", "UIKit"
+  s.frameworks = "Foundation", "CoreML", "Security", "UIKit"
 
   install_modules_dependencies(s)
 end

@@ -1,111 +1,202 @@
-import { NativeModules } from 'react-native';
+// SPDX-License-Identifier: Apache-2.0
+import NativeDatalakeBiometric, { type Spec } from './NativeDatalakeBiometric';
+import { randomIntFromBytes, type RandomInt } from './random';
 
-const { DatalakeBiometric } = NativeModules;
+export * from './liveness';
+export { randomIntFromBytes, type RandomInt } from './random';
 
-if (!DatalakeBiometric) {
-  throw new Error(
-    'DatalakeBiometric native module is not available. ' +
-      'Ensure the library is correctly linked and that you are running on a physical or emulated Android device. ' +
-      'If using Expo, this module requires a custom development build.'
-  );
+const LINKING_ERROR =
+  'The DatalakeBiometric native module is not available. Make sure the package is ' +
+  'installed, the app was rebuilt after installing it, and you are running on ' +
+  'Android or iOS (Expo Go and the web are not supported).';
+
+function native(): Spec {
+  if (!NativeDatalakeBiometric) {
+    throw new Error(LINKING_ERROR);
+  }
+  return NativeDatalakeBiometric;
 }
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// --- Types -------------------------------------------------------------------
 
-export type VerifyStatus = 'MATCH' | 'NO_MATCH' | 'NO_FACE' | 'POOR_QUALITY';
+/**
+ * Face bounding box in normalized image coordinates (0..1, origin top-left),
+ * as reported by a face detector such as ML Kit. On Android it selects which
+ * face to use; the face itself is located and aligned by the bundled BlazeFace
+ * detector. Without a box, the photo must contain exactly one face. iOS
+ * requires a box.
+ */
+export interface FaceBox {
+  nx: number;
+  ny: number;
+  nw: number;
+  nh: number;
+}
+
+export interface InitializeOptions {
+  /**
+   * Minimum cosine similarity (0..1) for a MATCH. Default 0.54: on the LFW
+   * benchmark this gives a false accept rate of about 1e-4 per comparison
+   * (see docs/BENCHMARKS.md). Every verification is compared with all enrolled
+   * people, so the risk of a false match grows with how many are enrolled;
+   * raise the threshold for large groups and calibrate on your own data.
+   */
+  matchThreshold?: number;
+  /**
+   * Minimum frame quality score (0..1, blur and exposure) before matching.
+   * Frames below it return POOR_QUALITY. Default 0.5.
+   */
+  minQuality?: number;
+}
+
+/**
+ * - `MATCH` / `NO_MATCH`: a face was embedded and compared.
+ * - `NO_FACE`: no usable face was found.
+ * - `MULTIPLE_FACES`: several faces were found with no face box given (Android).
+ * - `POOR_QUALITY`: the frame was too blurred or badly exposed.
+ */
+export type VerifyStatus =
+  | 'MATCH'
+  | 'NO_MATCH'
+  | 'NO_FACE'
+  | 'MULTIPLE_FACES'
+  | 'POOR_QUALITY';
 
 export interface VerifyResult {
   status: VerifyStatus;
+  /** Set when `status` is MATCH. */
   workerId?: string;
+  /** Cosine similarity of the best match, when `status` is MATCH. */
   confidence?: number;
+  /** Embedding model run time in milliseconds (Android). */
   inferenceMs?: number;
+  /** Whole native pipeline time in milliseconds (Android). */
   totalMs?: number;
+  /** Frame quality score 0..1 (Android). */
   quality?: number;
 }
 
 export interface EnrollResult {
   success: boolean;
+  /** Frames in which a face was found and embedded. */
   framesUsed: number;
 }
 
-export interface LivenessResult {
+/** Result of the experimental landmark-based blink check. */
+export interface LandmarkLivenessResult {
   isLive: boolean;
   isBlink: boolean;
   blinkCount: number;
   earValue: number;
 }
 
+export interface GeoLocation {
+  latitude: number;
+  longitude: number;
+}
+
 export interface AttendanceRecord {
   id: string;
   workerId: string;
+  /** Milliseconds since the Unix epoch. */
   timestamp: number;
-  latitude: number;
-  longitude: number;
+  /** Absent when the record was logged without a location. */
+  latitude?: number;
+  longitude?: number;
   confidence: number;
+  deviceId: string;
+  /** Base64 HMAC-SHA256 over the record fields, keyed by a per-install secret. */
   signature: string;
 }
 
-// ─── SDK ─────────────────────────────────────────────────────────────────────
+// --- SDK ---------------------------------------------------------------------
 
 export const BiometricSDK = {
-  /** Initialises TFLite models and the on-device embedding store. */
-  initialize(): Promise<boolean> {
-    return DatalakeBiometric.initialize();
+  /**
+   * Loads the models and opens the encrypted on-device database. Call once at
+   * app start. Other methods also initialize lazily on first use, but calling
+   * this early moves the one-time cost (and any setup error) to a known place.
+   */
+  initialize(options: InitializeOptions = {}): Promise<boolean> {
+    for (const [name, value] of Object.entries(options)) {
+      if (
+        value !== undefined &&
+        !(typeof value === 'number' && value >= 0 && value <= 1)
+      ) {
+        throw new RangeError(`${name} must be a number from 0 to 1.`);
+      }
+    }
+    return native().initialize(options);
   },
 
-  /** Enrols a worker by averaging embeddings from multiple base64-encoded JPEG frames.
-   *  Pass `hint` (normalized 0..1 face box from MLKit) for a tight crop; omit for
-   *  the native center-biased fallback. */
+  /**
+   * Enrolls a person from several base64 JPEG frames. The embeddings of all
+   * frames with a detectable face are averaged into one stored template.
+   * Re-enrolling the same `workerId` replaces the old template.
+   */
   enrollWorker(
     workerId: string,
     base64Frames: string[],
-    hint?: { nx: number; ny: number; nw: number; nh: number }
+    hint?: FaceBox
   ): Promise<EnrollResult> {
-    return DatalakeBiometric.enrollWorker(workerId, base64Frames, hint);
+    return native().enrollWorker(workerId, base64Frames, hint);
   },
 
-  /** Runs face detection, liveness check, and 1-N matching against enrolled workers.
-   *  Pass `hint` (normalized 0..1 face box from MLKit) for a tight crop; omit for
-   *  the native center-biased fallback. */
-  verifyWorker(
-    base64Image: string,
-    hint?: { nx: number; ny: number; nw: number; nh: number }
-  ): Promise<VerifyResult> {
-    return DatalakeBiometric.verifyWorker(base64Image, hint);
+  /**
+   * Runs the quality check, face detection and alignment, embedding and a 1:N
+   * search over all enrolled templates. This does not check liveness; run a
+   * liveness session first.
+   */
+  verifyWorker(base64Image: string, hint?: FaceBox): Promise<VerifyResult> {
+    return native().verifyWorker(base64Image, hint) as Promise<VerifyResult>;
   },
 
-  /** Evaluates MediaPipe face-mesh landmarks and returns blink/liveness state. */
-  checkLiveness(landmarks: Array<Array<number>>): Promise<LivenessResult> {
-    return DatalakeBiometric.checkLiveness(landmarks);
+  /**
+   * Experimental. Blink check from 468-point MediaPipe Face Mesh landmarks.
+   * Nothing in this package produces such landmarks yet; prefer the
+   * detector-agnostic session in `liveness.ts` (`createLivenessState`).
+   */
+  checkLiveness(landmarks: number[][]): Promise<LandmarkLivenessResult> {
+    return native().checkLiveness(landmarks);
   },
 
-  /** Records a verified attendance event locally and queues it for server sync. */
+  /**
+   * Stores a signed attendance record in the encrypted queue for later sync.
+   * Location is optional; when omitted, the record has no coordinates.
+   */
   logAttendance(
     workerId: string,
-    latitude: number,
-    longitude: number,
-    confidence: number
+    confidence: number,
+    location?: GeoLocation
   ): Promise<boolean> {
-    return DatalakeBiometric.logAndQueueAttendance(
-      workerId,
-      latitude,
-      longitude,
-      confidence
-    );
+    return native().logAndQueueAttendance(workerId, confidence, location);
   },
 
-  /** Returns all attendance records that have not yet been synced to the server. */
+  /** Returns records that were not marked as synced yet. */
   getPendingRecords(): Promise<AttendanceRecord[]> {
-    return DatalakeBiometric.getPendingAttendanceRecords();
+    return native().getPendingAttendanceRecords();
   },
 
-  /** Marks the given record IDs as synced so they are excluded from future uploads. */
+  /** Marks records as synced so they are no longer returned as pending. */
   markSynced(recordIds: string[]): Promise<boolean> {
-    return DatalakeBiometric.markRecordsSynced(recordIds);
+    return native().markRecordsSynced(recordIds);
   },
 
-  /** Purges all already-synced records from the local encrypted DB (local data purge). */
+  /** Deletes every record already marked as synced from the local database. */
   purgeSyncedRecords(): Promise<boolean> {
-    return DatalakeBiometric.purgeSyncedRecords();
+    return native().purgeSyncedRecords();
+  },
+
+  /**
+   * Returns a {@link RandomInt} backed by the platform's secure random source
+   * (Android `SecureRandom`, iOS `SecRandomCopyBytes`). React Native's
+   * JavaScript engine has no built-in `crypto.getRandomValues`, so this is the
+   * way to pick unpredictable liveness challenges.
+   *
+   * @param byteCount Size of the random pool. 32 bytes is plenty for picking challenges.
+   */
+  async createSecureRandomInt(byteCount = 32): Promise<RandomInt> {
+    const bytes = await native().getSecureRandomBytes(byteCount);
+    return randomIntFromBytes(bytes);
   },
 };

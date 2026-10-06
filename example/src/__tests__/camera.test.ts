@@ -1,52 +1,57 @@
-import { renderHook, act } from '@testing-library/react-native';
-import { useFaceState } from '../camera';
+// SPDX-License-Identifier: Apache-2.0
+import { act, renderHook } from '@testing-library/react-native';
+import type { FaceObservation } from 'datalake-biometric';
 
-// ─── Mocks — must be before any imports that pull in native code ──────────────
+// The frame-processor worklet is native; here the hook's JS-side handler is
+// captured from useRunOnJS and called directly with what the worklet would send.
+let mockHandleFrame: (...args: number[]) => void = () => {};
 
 jest.mock('react-native-vision-camera', () => ({
   useFrameProcessor: () => null,
 }));
-
 jest.mock('react-native-vision-camera-face-detector', () => ({
-  useFaceDetector: jest.fn(() => ({ detectFaces: jest.fn(() => []) })),
+  useFaceDetector: () => ({ detectFaces: () => [] }),
 }));
-
 jest.mock('react-native-worklets-core', () => ({
-  useRunOnJS: jest.fn((fn: unknown) => fn),
+  useRunOnJS: (fn: (...args: number[]) => void) => {
+    mockHandleFrame = fn;
+    return fn;
+  },
 }));
+jest.mock('react-native-blob-util', () => ({ fs: {} }));
 
-jest.mock('react-native-blob-util', () => ({
-  fs: { readFile: jest.fn().mockResolvedValue('base64data') },
-}));
+import { useFaceObservations } from '../camera';
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+// Argument order: count, leftEye, rightEye, smiling, yaw, nx, ny, nw, nh.
+describe('useFaceObservations', () => {
+  it('forwards each frame as a FaceObservation', () => {
+    const seen: FaceObservation[] = [];
+    const { result } = renderHook(() =>
+      useFaceObservations((o) => seen.push(o))
+    );
+    act(() => mockHandleFrame(1, 0.9, 0.8, -1, -25, 0.1, 0.2, 0.3, 0.4));
 
-describe('useFaceState', () => {
-  test('initializes with correct defaults', () => {
-    const { result } = renderHook(() => useFaceState());
-    expect(result.current.faceInFrame).toBe(false);
-    expect(result.current.blinkCount).toBe(0);
-    expect(result.current.eyesOpen).toBe(true);
-  });
-
-  test('getLastHint() returns null when no face seen', () => {
-    const { result } = renderHook(() => useFaceState());
-    expect(result.current.getLastHint()).toBeNull();
-  });
-
-  test('state values stay within valid ranges after update', () => {
-    const { result } = renderHook(() => useFaceState());
-    act(() => {
-      // Use optional chaining per spec: if updateFace doesn't exist, skip gracefully
-      (result.current as any).updateFace?.({
-        bounds: { x: 50, y: 80, width: 100, height: 120 },
-        leftEyeOpenProbability: 0.9,
-        rightEyeOpenProbability: 0.85,
-        frameWidth: 640,
-        frameHeight: 480,
-      });
+    expect(result.current.faceCount).toBe(1);
+    expect(seen[0]).toMatchObject({
+      faceCount: 1,
+      leftEyeOpenProbability: 0.9,
+      rightEyeOpenProbability: 0.8,
+      smilingProbability: undefined, // -1 means "not available"
+      headYawDegrees: -25,
     });
-    expect(result.current.blinkCount).toBeGreaterThanOrEqual(0);
-    expect(typeof result.current.eyesOpen).toBe('boolean');
+    expect(result.current.getLastFaceBox()).toEqual({
+      nx: 0.1,
+      ny: 0.2,
+      nw: 0.3,
+      nh: 0.4,
+    });
+  });
+
+  it('drops the face box when zero or several faces are visible', () => {
+    const { result } = renderHook(() => useFaceObservations());
+    act(() => mockHandleFrame(1, 1, 1, 0, 0, 0.1, 0.2, 0.3, 0.4));
+    act(() => mockHandleFrame(2, 1, 1, 0, 0, 0.1, 0.2, 0.3, 0.4));
+    expect(result.current.faceCount).toBe(2);
+    expect(result.current.getLastFaceBox()).toBeNull();
   });
 });

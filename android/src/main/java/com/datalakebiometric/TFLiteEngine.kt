@@ -1,276 +1,162 @@
-﻿package com.datalakebiometric
+// SPDX-License-Identifier: Apache-2.0
+package com.datalakebiometric
 
 import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Rect
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.Tensor
-import java.io.FileInputStream
+import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
 import kotlin.math.abs
-import kotlin.math.sqrt
+import kotlin.math.roundToInt
 
-class TFLiteEngine(private val assetManager: AssetManager) {
+/**
+ * Face embedding with MobileFaceNet, plus the face alignment and frame-quality
+ * checks that run before it.
+ *
+ * The bundled model is float32 with a 112x112 RGB input and a 192-value output.
+ * Input and output shapes and types are read from the model, so a different
+ * MobileFaceNet export (other output size, int8 quantized) also works; stored
+ * templates from another model are then ignored by the size check in [EmbeddingMath.cosine].
+ *
+ * Not thread-safe: callers serialize access.
+ */
+internal class TFLiteEngine(assets: AssetManager) : Closeable {
+  private val interpreter = Interpreter(
+    ModelAssets.load(assets, ModelAssets.MOBILEFACENET),
+    ModelAssets.interpreterOptions()
+  )
 
-    /**
-     * Normalized (0..1) face box hint coming from the JS-side MLKit detector.
-     * When supplied, `detectAndCrop` skips the center heuristic and crops a tight
-     * square around this region (with a little padding for forehead and chin).
-     */
-    data class FaceHint(val nx: Float, val ny: Float, val nw: Float, val nh: Float)
+  /** Duration of the last [embed] model run, in milliseconds. */
+  var lastInferenceMs: Long = 0L
+    private set
 
-    private val blazeFaceInterpreter: Interpreter
-    private val mobileFaceNetInterpreter: Interpreter
+  /**
+   * Warps the face into the 112x112 layout the model was trained on, using the
+   * eyes, nose and mouth keypoints (see [FaceAligner]). Returns null if the
+   * keypoints are missing or degenerate.
+   */
+  fun alignFace(bitmap: Bitmap, face: FaceDetection): Bitmap? {
+    if (face.keypoints.size < 8) return null
+    val w = bitmap.width
+    val h = bitmap.height
+    // The first four keypoints, in pixels: right eye, left eye, nose tip, mouth center.
+    val points = FloatArray(8) { i -> face.keypoints[i] * if (i % 2 == 0) w else h }
+    val t = FaceAligner.similarity(points) ?: return null
+    val matrix = Matrix().apply { setValues(floatArrayOf(t[0], t[1], t[2], t[3], t[4], t[5], 0f, 0f, 1f)) }
+    val aligned = Bitmap.createBitmap(INPUT_SIZE, INPUT_SIZE, Bitmap.Config.ARGB_8888)
+    Canvas(aligned).drawBitmap(bitmap, matrix, Paint(Paint.FILTER_BITMAP_FLAG))
+    return aligned
+  }
 
-    var lastInferenceMs: Long = 0L
-        private set
+  /** Returns the L2-normalized embedding of an aligned face from [alignFace]. */
+  fun embed(faceCrop: Bitmap): FloatArray {
+    val inputTensor = interpreter.getInputTensor(0)
+    val outputTensor = interpreter.getOutputTensor(0)
+    val outDim = outputTensor.shape().last()
+    val input = toInputBuffer(faceCrop, inputTensor)
 
-    init {
-        val options = Interpreter.Options().apply {
-            numThreads = 4
-            useXNNPACK = true
-        }
-        blazeFaceInterpreter = Interpreter(loadModelFromAssets("models/blazeface.tflite"), options)
-        mobileFaceNetInterpreter = Interpreter(loadModelFromAssets("models/mobilefacenet_int8.tflite"), options)
+    val start = System.nanoTime()
+    val raw = if (outputTensor.dataType() == DataType.FLOAT32) {
+      val out = Array(1) { FloatArray(outDim) }
+      interpreter.run(input, out)
+      out[0]
+    } else {
+      // Quantized output: real = (q - zeroPoint) * scale.
+      val out = Array(1) { ByteArray(outDim) }
+      interpreter.run(input, out)
+      val q = outputTensor.quantizationParams()
+      val unsigned = outputTensor.dataType() == DataType.UINT8
+      FloatArray(outDim) { i ->
+        val v = if (unsigned) out[0][i].toInt() and 0xFF else out[0][i].toInt()
+        (v - q.zeroPoint) * q.scale
+      }
+    }
+    lastInferenceMs = (System.nanoTime() - start) / 1_000_000
+    return EmbeddingMath.l2Normalize(raw)
+  }
+
+  /** Pixels scaled to [-1, 1], then quantized if the model input is int8 or uint8. */
+  private fun toInputBuffer(bitmap: Bitmap, tensor: Tensor): ByteBuffer {
+    val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
+    bitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
+
+    if (tensor.dataType() == DataType.FLOAT32) {
+      val buffer = ByteBuffer.allocateDirect(4 * pixels.size * 3).order(ByteOrder.nativeOrder())
+      for (p in pixels) {
+        buffer.putFloat(((p shr 16) and 0xFF) / 127.5f - 1f)
+        buffer.putFloat(((p shr 8) and 0xFF) / 127.5f - 1f)
+        buffer.putFloat((p and 0xFF) / 127.5f - 1f)
+      }
+      return buffer.rewind() as ByteBuffer
     }
 
-    private fun loadModelFromAssets(path: String): MappedByteBuffer {
-        val fd = assetManager.openFd(path)
-        val inputStream = FileInputStream(fd.fileDescriptor)
-        val channel = inputStream.channel
-        return channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
+    val q = tensor.quantizationParams()
+    val unsigned = tensor.dataType() == DataType.UINT8
+    val buffer = ByteBuffer.allocateDirect(pixels.size * 3).order(ByteOrder.nativeOrder())
+    for (p in pixels) {
+      for (channel in intArrayOf((p shr 16) and 0xFF, (p shr 8) and 0xFF, p and 0xFF)) {
+        val quantized = ((channel / 127.5f - 1f) / q.scale + q.zeroPoint).roundToInt()
+        buffer.put((if (unsigned) quantized.coerceIn(0, 255) else quantized.coerceIn(-128, 127)).toByte())
+      }
+    }
+    return buffer.rewind() as ByteBuffer
+  }
+
+  /**
+   * Frame quality from 0 to 1: the mean of a sharpness score (variance of the
+   * Laplacian, low for blurred frames) and an exposure score (penalizes very
+   * dark or very bright frames). Computed on a 256x256 copy, so the cost does
+   * not depend on camera resolution.
+   */
+  fun scoreQuality(bitmap: Bitmap): Float {
+    val size = QUALITY_SIZE
+    val scaled = Bitmap.createScaledBitmap(bitmap, size, size, true)
+    val pixels = IntArray(size * size)
+    scaled.getPixels(pixels, 0, size, 0, 0, size, size)
+    if (scaled !== bitmap) scaled.recycle()
+
+    var brightnessSum = 0.0
+    var laplacianSquaredSum = 0.0
+    var count = 0
+    for (y in 1 until size - 1) {
+      val row = y * size
+      for (x in 1 until size - 1) {
+        val c = luma(pixels[row + x])
+        brightnessSum += c
+        val laplacian = 4 * c - luma(pixels[row - size + x]) - luma(pixels[row + size + x]) -
+          luma(pixels[row + x - 1]) - luma(pixels[row + x + 1])
+        laplacianSquaredSum += laplacian * laplacian
+        count++
+      }
     }
 
-    fun detectAndCrop(bitmap: Bitmap, hint: FaceHint? = null): Bitmap? {
-        val bw = bitmap.width
-        val bh = bitmap.height
-
-        // ── HINT path: MLKit face box from the JS frame processor. ──
-        // We pad the box by 20% on each side so the crop includes forehead and
-        // chin (MobileFaceNet was trained on faces with that headroom), then
-        // square it off using the longer dimension.
-        if (hint != null && hint.nw > 0f && hint.nh > 0f) {
-            val pad = 0.20f
-            val cx = (hint.nx + hint.nw / 2f).coerceIn(0f, 1f)
-            val cy = (hint.ny + hint.nh / 2f).coerceIn(0f, 1f)
-            val sideNorm = maxOf(hint.nw, hint.nh) * (1f + 2f * pad)
-            val sidePx = (sideNorm * minOf(bw, bh)).toInt().coerceAtLeast(64)
-            val cxPx = (cx * bw).toInt()
-            val cyPx = (cy * bh).toInt()
-            var x = (cxPx - sidePx / 2).coerceAtLeast(0)
-            var y = (cyPx - sidePx / 2).coerceAtLeast(0)
-            val side = minOf(sidePx, bw - x, bh - y).coerceAtLeast(64)
-            // Re-clamp the top-left in case the side had to shrink to fit.
-            x = x.coerceAtMost(bw - side)
-            y = y.coerceAtMost(bh - side)
-
-            android.util.Log.d(
-                "DatalakeBM",
-                "detectAndCrop HINT in=${bw}x${bh} norm=(${"%.2f".format(hint.nx)},${"%.2f".format(hint.ny)},${"%.2f".format(hint.nw)},${"%.2f".format(hint.nh)}) -> crop=${side}x$side @ ($x,$y)"
-            )
-
-            return try {
-                val cropped = Bitmap.createBitmap(bitmap, x, y, side, side)
-                val out = Bitmap.createScaledBitmap(cropped, 112, 112, true)
-                if (cropped !== out) cropped.recycle()
-                out
-            } catch (e: Exception) {
-                android.util.Log.e("DatalakeBM", "detectAndCrop hint crop failed: ${e.message}")
-                null
-            }
-        }
-
-        // ── FALLBACK path: center-biased heuristic. ──
-        // BlazeFace's MediaPipe post-processing (anchor decoding + NMS + sigmoid)
-        // is not implemented here, so we trust the upstream MLKit "Face detected"
-        // indicator and take a center-biased square crop tuned for selfie capture
-        // (60% of the smaller dim, upper-third biased on portrait shots).
-        val side = (minOf(bw, bh) * 6) / 10
-        if (side < 32) return null
-        val x = ((bw - side) / 2).coerceAtLeast(0)
-        val isPortrait = bh > bw
-        val y = if (isPortrait) {
-            ((bh - side) / 4).coerceAtLeast(0)
-        } else {
-            ((bh - side) / 2).coerceAtLeast(0)
-        }
-
-        android.util.Log.d(
-            "DatalakeBM",
-            "detectAndCrop FALLBACK in=${bw}x${bh} crop=${side}x$side @ ($x,$y) portrait=$isPortrait"
-        )
-
-        return try {
-            val cropped = Bitmap.createBitmap(bitmap, x, y, side, side)
-            Bitmap.createScaledBitmap(cropped, 112, 112, true)
-        } catch (e: Exception) {
-            android.util.Log.e("DatalakeBM", "detectAndCrop crop failed: ${e.message}")
-            null
-        }
+    val meanBrightness = brightnessSum / count
+    val exposure = if (meanBrightness < 40 || meanBrightness > 220) {
+      0.2f
+    } else {
+      (1.0 - abs(meanBrightness - 130.0) / 130.0).toFloat()
     }
+    val laplacianVariance = laplacianSquaredSum / count
+    // Maps variance to 0..1; 500 is where a frame starts to look sharp.
+    val sharpness = (laplacianVariance / (laplacianVariance + 500.0)).toFloat()
+    return (0.5f * sharpness + 0.5f * exposure).coerceIn(0f, 1f)
+  }
 
-    fun embed(faceCrop: Bitmap): FloatArray {
-        // Adapt to whatever MobileFaceNet variant is bundled: the output dimension
-        // (128 / 192 / 512 ...) and the I/O dtype (float32, float16 -> float32, or
-        // int8/uint8 quantized) are read from the model instead of being hard-coded.
-        val inputTensor = mobileFaceNetInterpreter.getInputTensor(0)
-        val outputTensor = mobileFaceNetInterpreter.getOutputTensor(0)
-        val outShape = outputTensor.shape()
-        val outDim = outShape[outShape.size - 1]
+  private fun luma(pixel: Int): Double =
+    0.299 * ((pixel shr 16) and 0xFF) + 0.587 * ((pixel shr 8) and 0xFF) + 0.114 * (pixel and 0xFF)
 
-        val inputBuffer = faceInputBuffer(faceCrop, 112, 112, inputTensor)
+  override fun close() {
+    interpreter.close()
+  }
 
-        val start = System.currentTimeMillis()
-        val embedding: FloatArray = if (outputTensor.dataType() == DataType.FLOAT32) {
-            val out = Array(1) { FloatArray(outDim) }
-            mobileFaceNetInterpreter.run(inputBuffer, out)
-            out[0]
-        } else {
-            // Dequantize int8/uint8 output: real = (q - zeroPoint) * scale
-            val out = Array(1) { ByteArray(outDim) }
-            mobileFaceNetInterpreter.run(inputBuffer, out)
-            val q = outputTensor.quantizationParams()
-            val unsigned = outputTensor.dataType() == DataType.UINT8
-            FloatArray(outDim) { i ->
-                val raw = if (unsigned) (out[0][i].toInt() and 0xFF) else out[0][i].toInt()
-                (raw - q.zeroPoint) * q.scale
-            }
-        }
-        lastInferenceMs = System.currentTimeMillis() - start
-
-        return l2Normalize(embedding)
-    }
-
-    /**
-     * Builds the MobileFaceNet input buffer, matching the model's input dtype.
-     * Pixels are normalized to [-1, 1]; for quantized models they are then mapped
-     * into the tensor's quantization range.
-     */
-    private fun faceInputBuffer(bitmap: Bitmap, width: Int, height: Int, tensor: Tensor): ByteBuffer {
-        val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
-        val pixels = IntArray(width * height)
-        scaled.getPixels(pixels, 0, width, 0, 0, width, height)
-
-        if (tensor.dataType() == DataType.FLOAT32) {
-            val buffer = ByteBuffer.allocateDirect(4 * width * height * 3).order(ByteOrder.nativeOrder())
-            for (pixel in pixels) {
-                buffer.putFloat(((pixel shr 16 and 0xFF) / 127.5f) - 1f)
-                buffer.putFloat(((pixel shr 8 and 0xFF) / 127.5f) - 1f)
-                buffer.putFloat(((pixel and 0xFF) / 127.5f) - 1f)
-            }
-            buffer.rewind()
-            return buffer
-        }
-
-        // Quantized input (int8 / uint8)
-        val q = tensor.quantizationParams()
-        val unsigned = tensor.dataType() == DataType.UINT8
-        val buffer = ByteBuffer.allocateDirect(width * height * 3).order(ByteOrder.nativeOrder())
-        for (pixel in pixels) {
-            val channels = intArrayOf(pixel shr 16 and 0xFF, pixel shr 8 and 0xFF, pixel and 0xFF)
-            for (c in channels) {
-                val norm = (c / 127.5f) - 1f
-                val quantized = Math.round(norm / q.scale + q.zeroPoint)
-                val clamped = if (unsigned) quantized.coerceIn(0, 255) else quantized.coerceIn(-128, 127)
-                buffer.put(clamped.toByte())
-            }
-        }
-        buffer.rewind()
-        return buffer
-    }
-
-    fun scoreQuality(bitmap: Bitmap): Float {
-        // Always score against a small fixed-size copy so cost is O(TARGET^2),
-        // independent of the source resolution. The previous implementation
-        // allocated IntArray(width*height) (~50 MB on a 12 MP frame) and a
-        // boxed mutableListOf<Double>() that grew to width*height entries
-        // (~200 MB peak) — that OOMed the verify pipeline silently.
-        // 256x256 retains enough high-frequency edge content for a meaningful
-        // Laplacian-variance blur estimate.
-        val target = 256
-        val scaled = Bitmap.createScaledBitmap(bitmap, target, target, true)
-        val pixels = IntArray(target * target) // 256 KB — safe
-        scaled.getPixels(pixels, 0, target, 0, 0, target, target)
-        if (scaled !== bitmap) scaled.recycle()
-
-        var brightnessSum = 0.0
-        // Streaming accumulator: mean of squared Laplacians, no list growth.
-        var lapSqSum = 0.0
-        var lapCount = 0L
-
-        for (y in 1 until target - 1) {
-            val rowBase = y * target
-            for (x in 1 until target - 1) {
-                val c = luma(pixels[rowBase + x])
-                brightnessSum += c
-
-                val t = luma(pixels[rowBase - target + x])
-                val b = luma(pixels[rowBase + target + x])
-                val l = luma(pixels[rowBase + x - 1])
-                val r = luma(pixels[rowBase + x + 1])
-                val lap = c * 4 - t - b - l - r
-
-                lapSqSum += lap * lap
-                lapCount++
-            }
-        }
-
-        val meanBrightness = brightnessSum / (target * target)
-        val exposureScore = if (meanBrightness < 40 || meanBrightness > 220) 0.2f
-        else (1.0f - (abs(meanBrightness - 130.0) / 130.0).toFloat())
-
-        val laplacianVariance = if (lapCount > 0L) lapSqSum / lapCount else 0.0
-        val blurScore = (laplacianVariance / (laplacianVariance + 500.0)).toFloat().coerceIn(0f, 1f)
-
-        val result = (0.5f * blurScore + 0.5f * exposureScore).coerceIn(0f, 1f)
-        android.util.Log.d(
-            "DatalakeBM",
-            "scoreQuality bright=${"%.1f".format(meanBrightness)} lapVar=${"%.1f".format(laplacianVariance)} expo=${"%.2f".format(exposureScore)} blur=${"%.2f".format(blurScore)} -> ${"%.2f".format(result)}"
-        )
-        return result
-    }
-
-    private fun luma(pixel: Int): Double {
-        val r = ((pixel shr 16) and 0xFF).toDouble()
-        val g = ((pixel shr 8) and 0xFF).toDouble()
-        val b = (pixel and 0xFF).toDouble()
-        return 0.299.toDouble() * r + 0.587.toDouble() * g + 0.114.toDouble() * b
-    }
-
-    private fun bitmapToBuffer(bitmap: Bitmap, width: Int, height: Int): ByteBuffer {
-        val buffer = ByteBuffer.allocateDirect(4 * width * height * 3)
-        buffer.order(ByteOrder.nativeOrder())
-
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-
-        for (pixel in pixels) {
-            val r = ((pixel shr 16) and 0xFF) / 127.5f - 1f
-            val g = ((pixel shr 8) and 0xFF) / 127.5f - 1f
-            val b = (pixel and 0xFF) / 127.5f - 1f
-            buffer.putFloat(r)
-            buffer.putFloat(g)
-            buffer.putFloat(b)
-        }
-
-        buffer.rewind()
-        return buffer
-    }
-
-    private fun l2Normalize(embedding: FloatArray): FloatArray {
-        val norm = sqrt(embedding.fold(0f) { acc, v -> acc + v * v })
-        if (norm == 0f) return embedding
-        return FloatArray(embedding.size) { embedding[it] / norm }
-    }
-
-    fun close() {
-        blazeFaceInterpreter.close()
-        mobileFaceNetInterpreter.close()
-    }
+  companion object {
+    const val INPUT_SIZE = FaceAligner.SIZE
+    private const val QUALITY_SIZE = 256
+  }
 }

@@ -1,131 +1,105 @@
-import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+// SPDX-License-Identifier: Apache-2.0
+import type { ReactNode } from 'react';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
-// ─── Mocks — must be before any imports that pull in native code ──────────────
-
+// Native-only packages. The camera never mounts in these tests because no
+// device is returned, so only the hooks need stubs.
 jest.mock('react-native-vision-camera', () => ({
   Camera: 'Camera',
-  useCameraDevices: () => ({ front: { id: 'front' } }),
+  useCameraDevice: () => null,
+  useCameraPermission: () => ({
+    hasPermission: true,
+    requestPermission: jest.fn(),
+  }),
   useFrameProcessor: () => null,
 }));
-
 jest.mock('react-native-vision-camera-face-detector', () => ({
-  useFaceDetector: jest.fn(() => ({ detectFaces: jest.fn(() => []) })),
+  useFaceDetector: () => ({ detectFaces: () => [] }),
 }));
-
 jest.mock('react-native-worklets-core', () => ({
-  useRunOnJS: jest.fn((fn: unknown) => fn),
+  useRunOnJS: (fn: unknown) => fn,
 }));
-
-jest.mock('react-native-blob-util', () => ({
-  fs: { readFile: jest.fn().mockResolvedValue('base64data') },
-}));
-
+jest.mock('react-native-blob-util', () => ({ fs: {} }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
-  getItem: jest.fn().mockResolvedValue(null),
-  setItem: jest.fn().mockResolvedValue(undefined),
+  getItem: jest.fn(async () => null),
+  setItem: jest.fn(async () => undefined),
 }));
 
+// Keep the real liveness logic; replace only the calls into native code.
 jest.mock('datalake-biometric', () => ({
+  ...jest.requireActual('datalake-biometric'),
   BiometricSDK: {
-    initialize:           jest.fn().mockResolvedValue(true),
-    enrollWorker:         jest.fn().mockResolvedValue({ success: true, framesUsed: 3 }),
-    verifyWorker:         jest.fn().mockResolvedValue({ status: 'MATCH', confidence: 0.95 }),
-    logAttendance:        jest.fn().mockResolvedValue(undefined),
-    getPendingRecords:    jest.fn().mockResolvedValue([]),
-    markSynced:           jest.fn().mockResolvedValue(undefined),
-    purgeSyncedRecords:   jest.fn().mockResolvedValue(true),
+    getPendingRecords: jest.fn(async () => []),
+    // Always index 0: picks blink, then smile.
+    createSecureRandomInt: jest.fn(async () => () => 0),
   },
 }));
-
-// ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import { ThemeProvider } from '../ThemeContext';
 import MenuScreen from '../screens/MenuScreen';
 import EnrollScreen from '../screens/EnrollScreen';
 import VerifyScreen from '../screens/VerifyScreen';
 
-// Wrap with ThemeProvider for all tests
-const Wrapper = ({ children }: { children: React.ReactNode }) => (
+const Wrapper = ({ children }: { children: ReactNode }) => (
   <ThemeProvider>{children}</ThemeProvider>
 );
 
-// ─── MenuScreen ───────────────────────────────────────────────────────────────
-
 describe('MenuScreen', () => {
-  const mockNavigate = jest.fn();
-
-  beforeEach(() => mockNavigate.mockClear());
-
-  test('renders all 4 menu items', () => {
-    render(
-      <MenuScreen navigate={mockNavigate} initStatus="ready" />,
-      { wrapper: Wrapper }
-    );
-    expect(screen.getByText(/Enroll Worker/i)).toBeTruthy();
-    expect(screen.getByText(/Verify/i)).toBeTruthy();
-    expect(screen.getByText(/Benchmark/i)).toBeTruthy();
-    expect(screen.getByText(/Sync/i)).toBeTruthy();
+  it('navigates to the chosen screen', () => {
+    const navigate = jest.fn();
+    render(<MenuScreen navigate={navigate} initStatus="ready" />, {
+      wrapper: Wrapper,
+    });
+    fireEvent.press(screen.getByText(/Enroll Worker/));
+    expect(navigate).toHaveBeenCalledWith('enroll');
   });
 
-  test('calls navigate on menu item press', () => {
-    render(
-      <MenuScreen navigate={mockNavigate} initStatus="ready" />,
-      { wrapper: Wrapper }
-    );
-    fireEvent.press(screen.getByText(/Enroll Worker/i));
-    expect(mockNavigate).toHaveBeenCalledWith('enroll');
-  });
-
-  test('shows Init Failed when initStatus is failed', () => {
-    render(
-      <MenuScreen navigate={mockNavigate} initStatus="failed" />,
-      { wrapper: Wrapper }
-    );
-    expect(screen.getByText(/Init Failed/i)).toBeTruthy();
+  it('shows when initialization failed', () => {
+    render(<MenuScreen navigate={jest.fn()} initStatus="failed" />, {
+      wrapper: Wrapper,
+    });
+    expect(screen.getByText(/Init Failed/)).toBeTruthy();
   });
 });
-
-// ─── EnrollScreen ─────────────────────────────────────────────────────────────
 
 describe('EnrollScreen', () => {
-  test('capture button disabled with no worker ID', () => {
-    render(
-      <EnrollScreen navigate={jest.fn()} isActive={true} />,
-      { wrapper: Wrapper }
-    );
-    const btn = screen.getByText(/Capture/i);
-    // WorkerId is empty → parent TouchableOpacity has disabled=true
-    expect(btn.props.disabled ?? btn.parent?.props.disabled).toBeTruthy();
+  it('disables capture while no ID is entered and no face is in view', async () => {
+    render(<EnrollScreen navigate={jest.fn()} isActive />, {
+      wrapper: Wrapper,
+    });
+    const button = await screen.findByRole('button', {
+      name: /Capture 3 & Enroll/,
+    });
+    expect(button.props.accessibilityState?.disabled).toBe(true);
   });
 });
 
-// ─── VerifyScreen ─────────────────────────────────────────────────────────────
-
 describe('VerifyScreen', () => {
+  beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
-  test('shows a liveness challenge instruction on mount', () => {
+  it('starts a session with the challenges chosen by the random source', async () => {
     render(
-      <VerifyScreen navigate={jest.fn()} isActive={true} onResult={jest.fn()} />,
-      { wrapper: Wrapper }
+      <VerifyScreen navigate={jest.fn()} isActive onResult={jest.fn()} />,
+      {
+        wrapper: Wrapper,
+      }
     );
-    // Challenge is randomized — one of blink / smile / turn must be shown.
-    const hasBlink = screen.queryByText(/blink/i) !== null;
-    const hasSmile = screen.queryByText(/smile/i) !== null;
-    const hasTurn  = screen.queryByText(/turn your head/i) !== null;
-    expect(hasBlink || hasSmile || hasTurn).toBe(true);
+    expect(await screen.findByText('Step 1 of 2: Blink twice')).toBeTruthy();
   });
 
-  test('shows SPOOF after liveness timeout', async () => {
-    jest.useFakeTimers();
+  it('fails the session after the timeout even without camera frames', async () => {
     render(
-      <VerifyScreen navigate={jest.fn()} isActive={true} onResult={jest.fn()} />,
-      { wrapper: Wrapper }
+      <VerifyScreen navigate={jest.fn()} isActive onResult={jest.fn()} />,
+      {
+        wrapper: Wrapper,
+      }
     );
-    jest.advanceTimersByTime(12001);
-    await waitFor(() => {
-      expect(screen.getByText(/SPOOF|NO LIVENESS/i)).toBeTruthy();
+    await screen.findByText(/Step 1 of 2/);
+    await act(async () => {
+      jest.advanceTimersByTime(13_000);
     });
+    expect(screen.getByText('Not verified')).toBeTruthy();
+    expect(screen.getByText(/not completed within 12 s/)).toBeTruthy();
   });
 });

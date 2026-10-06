@@ -1,81 +1,81 @@
-﻿package com.datalakebiometric
+// SPDX-License-Identifier: Apache-2.0
+package com.datalakebiometric
 
 import kotlin.math.sqrt
 
-class LivenessEngine {
+/**
+ * Experimental blink counter over 468-point MediaPipe Face Mesh landmarks,
+ * using the eye aspect ratio (EAR): the eye's height relative to its width,
+ * which drops sharply while the eye is closed.
+ *
+ * Nothing in this package produces Face Mesh landmarks yet. The recommended
+ * liveness path is the detector-agnostic session in `src/liveness.ts`.
+ */
+internal class LivenessEngine {
 
-    private val leftEye = listOf(362, 385, 387, 263, 373, 380)
-    private val rightEye = listOf(33, 160, 158, 133, 153, 144)
+  data class Result(
+    val isLive: Boolean,
+    val isBlink: Boolean,
+    val blinkCount: Int,
+    val averageEar: Float
+  )
 
-    private val EAR_THRESHOLD = 0.20f
+  // Face Mesh indices of six points around each eye, in EAR order p0..p5.
+  private val leftEye = intArrayOf(362, 385, 387, 263, 373, 380)
+  private val rightEye = intArrayOf(33, 160, 158, 133, 153, 144)
 
-    private var blinkCount: Int = 0
-    private var wasEyeClosed: Boolean = false
-    private val earHistory: ArrayDeque<Float> = ArrayDeque()
+  private var blinkCount = 0
+  private var eyeWasClosed = false
+  private val earHistory = ArrayDeque<Float>()
 
-    data class LivenessResult(
-        val isLive: Boolean,
-        val isBlink: Boolean,
-        val blinkCount: Int,
-        val avgEar: Float
-    )
+  fun evaluate(landmarks: Array<FloatArray>): Result {
+    if (landmarks.size < FACE_MESH_POINTS) return Result(false, false, 0, 0f)
 
-    fun evaluate(landmarks: Array<FloatArray>): Array<Any?> {
-        if (landmarks.size < 468) {
-            return arrayOf(false, false, 0, 0f)
-        }
+    val ear = (eyeAspectRatio(landmarks, leftEye) + eyeAspectRatio(landmarks, rightEye)) / 2f
+    if (earHistory.size >= HISTORY_FRAMES) earHistory.removeFirst()
+    earHistory.addLast(ear)
 
-        val earLeft = computeEAR(landmarks, leftEye)
-        val earRight = computeEAR(landmarks, rightEye)
-        val avgEAR = (earLeft + earRight) / 2f
+    val closed = ear < EAR_CLOSED
+    // Counted on re-opening, so a still photo with closed eyes never counts.
+    val isBlink = eyeWasClosed && !closed
+    if (isBlink) blinkCount++
+    eyeWasClosed = closed
 
-        if (earHistory.size >= 30) earHistory.removeFirst()
-        earHistory.addLast(avgEAR)
+    // A replayed loop tends to show near-constant EAR between blinks; real eyes jitter.
+    val isLive = blinkCount >= REQUIRED_BLINKS && variance(earHistory) > MIN_EAR_VARIANCE
+    return Result(isLive, isBlink, blinkCount, ear)
+  }
 
-        val isEyeClosed = avgEAR < EAR_THRESHOLD
-        // Count a blink on the re-open transition (closed → open), not on close.
-        // This matches the JS ML Kit state machine and prevents a static
-        // closed-eye photo from producing unbounded blink counts.
-        val isBlink = wasEyeClosed && !isEyeClosed
-        if (isBlink) blinkCount++
-        wasEyeClosed = isEyeClosed
+  fun reset() {
+    blinkCount = 0
+    eyeWasClosed = false
+    earHistory.clear()
+  }
 
-        val earVariance = computeVariance(earHistory)
-        val isLive = blinkCount >= 2 && earVariance > 0.0005f
+  /** EAR = (|p1 - p5| + |p2 - p4|) / (2 * |p0 - p3|). */
+  private fun eyeAspectRatio(points: Array<FloatArray>, idx: IntArray): Float {
+    val width = distance(points[idx[0]], points[idx[3]])
+    if (width == 0f) return 0f
+    return (distance(points[idx[1]], points[idx[5]]) + distance(points[idx[2]], points[idx[4]])) / (2f * width)
+  }
 
-        return arrayOf(isLive, isBlink, blinkCount, avgEAR)
-    }
+  private fun distance(a: FloatArray, b: FloatArray): Float {
+    val dx = a[0] - b[0]
+    val dy = a[1] - b[1]
+    return sqrt(dx * dx + dy * dy)
+  }
 
-    private fun computeEAR(landmarks: Array<FloatArray>, indices: List<Int>): Float {
-        // EAR = (dist(p1,p5) + dist(p2,p4)) / (2 * dist(p0,p3))
-        val p0 = landmarks[indices[0]]
-        val p1 = landmarks[indices[1]]
-        val p2 = landmarks[indices[2]]
-        val p3 = landmarks[indices[3]]
-        val p4 = landmarks[indices[4]]
-        val p5 = landmarks[indices[5]]
+  private fun variance(values: Collection<Float>): Float {
+    if (values.isEmpty()) return 0f
+    val mean = values.sum() / values.size
+    return values.fold(0f) { acc, v -> acc + (v - mean) * (v - mean) } / values.size
+  }
 
-        val horizontal = dist(p0, p3)
-        if (horizontal == 0f) return 0f
-
-        return (dist(p1, p5) + dist(p2, p4)) / (2f * horizontal)
-    }
-
-    private fun dist(a: FloatArray, b: FloatArray): Float {
-        val dx = a[0] - b[0]
-        val dy = a[1] - b[1]
-        return sqrt(dx * dx + dy * dy)
-    }
-
-    private fun computeVariance(values: ArrayDeque<Float>): Float {
-        if (values.isEmpty()) return 0f
-        val mean = values.sum() / values.size
-        return values.fold(0f) { acc, v -> acc + (v - mean) * (v - mean) } / values.size
-    }
-
-    fun reset() {
-        blinkCount = 0
-        wasEyeClosed = false
-        earHistory.clear()
-    }
+  companion object {
+    private const val FACE_MESH_POINTS = 468
+    private const val HISTORY_FRAMES = 30
+    private const val EAR_CLOSED = 0.20f
+    private const val REQUIRED_BLINKS = 2
+    private const val MIN_EAR_VARIANCE = 0.0005f
+  }
 }

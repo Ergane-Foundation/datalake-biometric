@@ -1,11 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
- * Runtime configuration for the example app.
+ * Example app configuration.
  *
- * `SYNC_ENDPOINT` points at the deployed AWS API Gateway URL. The first
- * `deploy-backend` workflow run prints the URL in its job summary; copy that
- * string here and commit. Until then `null` keeps the Sync screen in
- * local-only mode (records get marked synced but nothing leaves the device).
+ * Sync is optional. The SDK works fully offline; the Sync screen only uploads
+ * queued records when you deploy your own backend (see backend/README.md) and
+ * enter its URL and access token on that screen at runtime.
+ *
+ * Do not commit a real endpoint or token here. `DEFAULT_SYNC_ENDPOINT` only
+ * pre-fills the URL field, for local convenience.
  */
-export const SYNC_ENDPOINT: string | null = 'https://YOUR-API-ID.execute-api.REGION.amazonaws.com/sync';
-// Example after first deploy:
-// export const SYNC_ENDPOINT = 'https://abc123.execute-api.ap-south-1.amazonaws.com/sync';
+export const DEFAULT_SYNC_ENDPOINT: string | null = null;

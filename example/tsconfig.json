@@ -1,0 +1,10 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "paths": {
+      "datalake-biometric": ["../src/index"]
+    }
+  },
+  "include": ["src", "index.js"]
+}

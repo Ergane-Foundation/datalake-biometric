@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import {
   StyleSheet,
   Text,
@@ -24,7 +25,7 @@ const ITEMS: { key: Screen; title: string; body: string; emoji: string }[] = [
   {
     key: 'verify',
     title: 'Verify + Liveness',
-    body: 'Blink twice to prove liveness, then match against enrolled workers.',
+    body: 'Pass two random liveness challenges, then match against enrolled people.',
     emoji: '🔎',
   },
   {
@@ -35,8 +36,8 @@ const ITEMS: { key: Screen; title: string; body: string; emoji: string }[] = [
   },
   {
     key: 'sync',
-    title: 'Sync Status',
-    body: 'Pending offline attendance records queued for upload.',
+    title: 'Sync',
+    body: 'Pending attendance records and optional upload to your backend.',
     emoji: '☁️',
   },
 ];
@@ -44,13 +45,17 @@ const ITEMS: { key: Screen; title: string; body: string; emoji: string }[] = [
 function StatusPill({ status }: { status: InitStatus }) {
   const { colors } = useTheme();
   const map = {
-    pending: { bg: colors.cardAlt, fg: colors.textDim, label: 'Initialising…' },
+    pending: {
+      bg: colors.cardAlt,
+      fg: colors.textDim,
+      label: 'Initialising...',
+    },
     ready: { bg: colors.success, fg: '#FFFFFF', label: 'SDK Ready' },
     failed: { bg: colors.danger, fg: '#FFFFFF', label: 'Init Failed' },
   }[status];
   return (
     <View style={[s.pill, { backgroundColor: map.bg }]}>
-      <Text style={[s.pillText, { color: map.fg }]}>● {map.label}</Text>
+      <Text style={[s.pillText, { color: map.fg }]}>{map.label}</Text>
     </View>
   );
 }
@@ -98,8 +103,10 @@ export default function MenuScreen({ navigate, initStatus }: Props) {
             >
               {it.emoji} {it.title}
             </Text>
-            <Text style={{ color: colors.textDim, fontSize: 22, marginLeft: 8 }}>
-              ›
+            <Text
+              style={{ color: colors.textDim, fontSize: 22, marginLeft: 8 }}
+            >
+              {'>'}
             </Text>
           </View>
           <Text style={[s.cardBody, { color: colors.textDim }]}>{it.body}</Text>

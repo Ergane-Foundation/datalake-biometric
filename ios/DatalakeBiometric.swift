@@ -1,487 +1,405 @@
+// SPDX-License-Identifier: Apache-2.0
 // DatalakeBiometric.swift
-// Datalake Biometric iOS native module.
-// Frameworks: Foundation, React, Vision, CoreML, CryptoKit, Security, SQLite3
+//
+// iOS native module. EXPERIMENTAL: it compiles in CI but has not been verified
+// on a device. Embedding uses a Core ML model ("MobileFaceNet.mlmodelc") that
+// this repository does not ship yet, so initialize() rejects with
+// MODEL_NOT_FOUND until one is added to the app bundle. iOS has no built-in
+// face detector here: pass a face box (for example from ML Kit).
 
-import Foundation
-import UIKit
-import CoreVideo
 import CoreGraphics
-import React
-import Vision
 import CoreML
+import CoreVideo
 import CryptoKit
-import Security
+import Foundation
+import React
 import SQLite3
+import Security
+import UIKit
+
+// Same default as Android, calibrated on LFW for FAR 1e-4 per comparison. iOS has
+// no face alignment yet, so this value does not hold there (see docs/BENCHMARKS.md).
+private let defaultMatchThreshold = 0.54
+
+/// An error with a stable code that becomes the JavaScript rejection code.
+struct BiometricError: Error {
+  let code: String
+  let message: String
+}
 
 // MARK: - KeyVault
 
-/// Manages a 256-bit symmetric key in the iOS Keychain.
-/// The key is used to HMAC-sign attendance records for tamper-evidence.
+/// Stores two independent random 256-bit secrets in the Keychain: the database
+/// passphrase and the record-signing key. Using separate secrets means a leak
+/// of one does not expose the other. Items are bound to this device and are
+/// readable after the first unlock, so background sync can still work.
 final class KeyVault {
+  private let service = "com.datalakebiometric.keys"
 
-  static let kAlias = "datalake_biometric_key"
-
-  // MARK: getOrCreateKey
-
-  /// Returns the existing Keychain-stored key, or generates and stores a new one.
-  func getOrCreateKey() -> SymmetricKey {
-    let tag = KeyVault.kAlias.data(using: .utf8)!
-
-    // Query Keychain for an existing key
+  func secret(named account: String) throws -> Data {
     let query: [String: Any] = [
-      kSecClass as String: kSecClassKey,
-      kSecAttrApplicationTag as String: tag,
-      kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom, // generic key type for raw data
-      kSecReturnData as String: true
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
     ]
-
-    var dataRef: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &dataRef)
-
-    if status == errSecSuccess, let data = dataRef as? Data {
-      return SymmetricKey(data: data)
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    if status == errSecSuccess, let data = item as? Data {
+      return data
+    }
+    guard status == errSecItemNotFound else {
+      throw BiometricError(code: "KEYCHAIN_ERROR", message: "Keychain read failed (\(status)).")
     }
 
-    // Generate new 256-bit key
-    let newKey = SymmetricKey(size: .bits256)
-    let keyData = newKey.withUnsafeBytes { Data($0) }
-
-    let addQuery: [String: Any] = [
-      kSecClass as String: kSecClassKey,
-      kSecAttrApplicationTag as String: tag,
-      kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
-      kSecValueData as String: keyData,
-      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    var bytes = [UInt8](repeating: 0, count: 32)
+    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+      throw BiometricError(code: "KEYCHAIN_ERROR", message: "Could not generate a key.")
+    }
+    let data = Data(bytes)
+    let add: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecValueData as String: data,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
     ]
-
-    SecItemAdd(addQuery as CFDictionary, nil)
-    return newKey
+    let addStatus = SecItemAdd(add as CFDictionary, nil)
+    guard addStatus == errSecSuccess else {
+      throw BiometricError(code: "KEYCHAIN_ERROR", message: "Keychain write failed (\(addStatus)).")
+    }
+    return data
   }
+}
 
-  // MARK: signRecord
+// MARK: - Attendance signature
 
-  /// Returns base64-encoded HMAC-SHA256 signature for the given record string.
-  func signRecord(_ record: String) -> String {
-    let key = getOrCreateKey()
-    let recordData = Data(record.utf8)
-    let mac = HMAC<SHA256>.authenticationCode(for: recordData, using: key)
-    return Data(mac).base64EncodedString()
+/// Same canonical text as Android's AttendanceSignature.kt. Keep both in sync:
+/// `v1|id|workerId|timestamp|latitude|longitude|confidence|deviceId`.
+enum AttendanceSignature {
+  static func payload(
+    id: String, workerId: String, timestampMs: Int64,
+    latitude: Double?, longitude: Double?, confidence: Double, deviceId: String
+  ) -> String {
+    // String(format:) uses the POSIX locale, so the decimal separator is always ".".
+    func coordinate(_ v: Double?) -> String { v.map { String(format: "%.7f", $0) } ?? "" }
+    return [
+      "v1", id, workerId, String(timestampMs),
+      coordinate(latitude), coordinate(longitude),
+      String(format: "%.6f", confidence), deviceId,
+    ].joined(separator: "|")
   }
 }
 
 // MARK: - EmbeddingStore
 
-/// SQLCipher-backed store for face embeddings and offline attendance logs.
+/// SQLCipher-encrypted store for face templates and queued attendance records.
 final class EmbeddingStore {
+  private var db: OpaquePointer?
+  private static let schemaVersion: Int32 = 2
 
-  var db: OpaquePointer? = nil
+  /// Tells SQLite to copy bound values, so Swift temporaries can be released.
+  private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-  // MARK: open
-
-  /// Opens (or creates) the SQLCipher database at `path` and applies the `passphrase`.
-  /// Creates the required tables and indexes if they don't exist.
-  /// Returns `true` on success.
-  func open(path: String, passphrase: String) -> Bool {
-    guard sqlite3_open(path, &db) == SQLITE_OK else {
-      return false
+  /// Opens the database and verifies that encryption is really active.
+  ///
+  /// `PRAGMA key` is silently ignored by the system SQLite, so if the app were
+  /// linked against it instead of SQLCipher, data would be stored in plain
+  /// text. `PRAGMA cipher_version` only returns a row under SQLCipher; without
+  /// it the store refuses to open.
+  func open(url: URL, key: Data) throws {
+    guard sqlite3_open(url.path, &db) == SQLITE_OK else {
+      throw BiometricError(code: "DB_OPEN_FAILED", message: "Could not open the database.")
     }
-
-    // Apply SQLCipher encryption passphrase
-    let keySQL = "PRAGMA key = '\(passphrase)';"
-    guard sqlite3_exec(db, keySQL, nil, nil, nil) == SQLITE_OK else {
-      return false
+    // Raw 256-bit key in SQLCipher's blob syntax, so no key derivation is needed.
+    let hex = key.map { String(format: "%02x", $0) }.joined()
+    try exec("PRAGMA key = \"x'\(hex)'\";")
+    guard try queryString("PRAGMA cipher_version;") != nil else {
+      close()
+      throw BiometricError(
+        code: "ENCRYPTION_UNAVAILABLE",
+        message: "SQLCipher is not linked; refusing to store biometric data unencrypted.")
     }
+    try migrate()
+  }
 
-    let schema = """
+  private func migrate() throws {
+    let raw = try queryString("PRAGMA user_version;") ?? "0"
+    let version = Int32(raw) ?? 0
+    if version < 2 {
+      // Version 1 required a location and had no device ID. It could never
+      // hold records (initialize always failed without the Core ML model),
+      // so the table is recreated instead of migrated.
+      try exec("DROP TABLE IF EXISTS attendance_log;")
+    }
+    try exec(
+      """
       CREATE TABLE IF NOT EXISTS embeddings (
-        id          INTEGER PRIMARY KEY,
-        worker_id   TEXT    UNIQUE NOT NULL,
-        embedding   BLOB    NOT NULL,
+        worker_id   TEXT PRIMARY KEY,
+        embedding   BLOB NOT NULL,
         enrolled_at INTEGER NOT NULL
       );
-
       CREATE TABLE IF NOT EXISTS attendance_log (
-        id         TEXT    PRIMARY KEY,
-        worker_id  TEXT    NOT NULL,
+        id         TEXT PRIMARY KEY,
+        worker_id  TEXT NOT NULL,
         timestamp  INTEGER NOT NULL,
-        latitude   REAL    NOT NULL,
-        longitude  REAL    NOT NULL,
-        confidence REAL    NOT NULL,
-        signature  TEXT    NOT NULL,
-        synced     BOOLEAN DEFAULT 0
+        latitude   REAL,
+        longitude  REAL,
+        confidence REAL NOT NULL,
+        device_id  TEXT NOT NULL,
+        signature  TEXT NOT NULL,
+        synced     INTEGER NOT NULL DEFAULT 0
       );
-
       CREATE INDEX IF NOT EXISTS idx_synced ON attendance_log(synced);
-    """
-
-    return sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK
+      PRAGMA user_version = \(EmbeddingStore.schemaVersion);
+      """)
   }
 
-  // MARK: insertEmbedding
-
-  /// Inserts or replaces a worker's face embedding (array of Floats serialised as BLOB).
-  func insertEmbedding(workerId: String, embedding: [Float]) -> Bool {
-    guard let db = db else { return false }
-
-    let sql = """
-      INSERT OR REPLACE INTO embeddings (worker_id, embedding, enrolled_at)
-      VALUES (?, ?, ?);
-    """
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+  func saveTemplate(workerId: String, embedding: [Float]) throws {
+    let stmt = try prepare(
+      "INSERT OR REPLACE INTO embeddings (worker_id, embedding, enrolled_at) VALUES (?, ?, ?);")
     defer { sqlite3_finalize(stmt) }
-
-    let blobData = embedding.withUnsafeBufferPointer { Data(buffer: $0) }
-    let ts = Int64(Date().timeIntervalSince1970 * 1000)
-
-    sqlite3_bind_text(stmt, 1, (workerId as NSString).utf8String, -1, nil)
-    blobData.withUnsafeBytes { rawBytes in
-      _ = sqlite3_bind_blob(stmt, 2, rawBytes.baseAddress, Int32(blobData.count), nil)
+    bindText(stmt, 1, workerId)
+    let blob = embedding.withUnsafeBufferPointer { Data(buffer: $0) }
+    _ = blob.withUnsafeBytes { bytes in
+      sqlite3_bind_blob(stmt, 2, bytes.baseAddress, Int32(blob.count), sqliteTransient)
     }
-    sqlite3_bind_int64(stmt, 3, ts)
-
-    return sqlite3_step(stmt) == SQLITE_DONE
+    sqlite3_bind_int64(stmt, 3, Int64(Date().timeIntervalSince1970 * 1000))
+    try step(stmt)
   }
 
-  // MARK: queryAllEmbeddings
-
-  /// Returns all stored worker embeddings as an array of (workerId, [Float]) tuples.
-  func queryAllEmbeddings() -> [(workerId: String, embedding: [Float])] {
-    guard let db = db else { return [] }
-
-    let sql = "SELECT worker_id, embedding FROM embeddings;"
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+  /// Linear 1:N search. Templates of another size (a different model) are skipped.
+  func bestMatch(for query: [Float], threshold: Double) throws -> (workerId: String, similarity: Double)? {
+    let stmt = try prepare("SELECT worker_id, embedding FROM embeddings;")
     defer { sqlite3_finalize(stmt) }
-
-    var results: [(workerId: String, embedding: [Float])] = []
-
+    var best: (workerId: String, similarity: Double)?
     while sqlite3_step(stmt) == SQLITE_ROW {
-      // SELECT worker_id, embedding → result column 0 = worker_id, 1 = embedding.
-      let workerId = String(cString: sqlite3_column_text(stmt, 0))
-      let blobPtr  = sqlite3_column_blob(stmt, 1)
-      let blobSize = sqlite3_column_bytes(stmt, 1)
-
-      if let blobPtr = blobPtr, blobSize > 0 {
-        let count = Int(blobSize) / MemoryLayout<Float>.size
-        let floatBuffer = blobPtr.assumingMemoryBound(to: Float.self)
-        let embedding = Array(UnsafeBufferPointer(start: floatBuffer, count: count))
-        results.append((workerId: workerId, embedding: embedding))
+      guard let idText = sqlite3_column_text(stmt, 0), let blob = sqlite3_column_blob(stmt, 1) else {
+        continue
+      }
+      let count = Int(sqlite3_column_bytes(stmt, 1)) / MemoryLayout<Float>.size
+      guard count == query.count else { continue }
+      let stored = UnsafeBufferPointer(start: blob.assumingMemoryBound(to: Float.self), count: count)
+      var dot: Float = 0
+      for i in 0..<count { dot += query[i] * stored[i] }
+      let similarity = Double(dot)
+      if similarity >= threshold && similarity > (best?.similarity ?? -Double.infinity) {
+        best = (String(cString: idText), similarity)
       }
     }
-    return results
+    return best
   }
 
-  // MARK: insertAttendance
-
-  /// Inserts a single offline attendance record.
-  func insertAttendance(id: String, workerId: String, timestamp: Int64,
-                        lat: Double, lng: Double, confidence: Double,
-                        signature: String) -> Bool {
-    guard let db = db else { return false }
-
-    let sql = """
-      INSERT OR IGNORE INTO attendance_log
-        (id, worker_id, timestamp, latitude, longitude, confidence, signature, synced)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0);
-    """
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+  func insertAttendance(
+    id: String, workerId: String, timestampMs: Int64, latitude: Double?, longitude: Double?,
+    confidence: Double, deviceId: String, signature: String
+  ) throws {
+    let stmt = try prepare(
+      """
+      INSERT INTO attendance_log
+        (id, worker_id, timestamp, latitude, longitude, confidence, device_id, signature, synced)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0);
+      """)
     defer { sqlite3_finalize(stmt) }
-
-    sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
-    sqlite3_bind_text(stmt, 2, (workerId as NSString).utf8String, -1, nil)
-    sqlite3_bind_int64(stmt, 3, timestamp)
-    sqlite3_bind_double(stmt, 4, lat)
-    sqlite3_bind_double(stmt, 5, lng)
+    bindText(stmt, 1, id)
+    bindText(stmt, 2, workerId)
+    sqlite3_bind_int64(stmt, 3, timestampMs)
+    if let latitude { sqlite3_bind_double(stmt, 4, latitude) } else { sqlite3_bind_null(stmt, 4) }
+    if let longitude { sqlite3_bind_double(stmt, 5, longitude) } else { sqlite3_bind_null(stmt, 5) }
     sqlite3_bind_double(stmt, 6, confidence)
-    sqlite3_bind_text(stmt, 7, (signature as NSString).utf8String, -1, nil)
-
-    return sqlite3_step(stmt) == SQLITE_DONE
+    bindText(stmt, 7, deviceId)
+    bindText(stmt, 8, signature)
+    try step(stmt)
   }
 
-  // MARK: getPending
-
-  /// Returns all unsynced attendance records as dictionaries suitable for JS consumption.
-  func getPending() -> [[String: Any]] {
-    guard let db = db else { return [] }
-
-    let sql = """
-      SELECT id, worker_id, timestamp, latitude, longitude, confidence, signature
-      FROM attendance_log WHERE synced = 0;
-    """
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+  func pendingRecords() throws -> [[String: Any]] {
+    let stmt = try prepare(
+      """
+      SELECT id, worker_id, timestamp, latitude, longitude, confidence, device_id, signature
+      FROM attendance_log WHERE synced = 0 ORDER BY timestamp ASC;
+      """)
     defer { sqlite3_finalize(stmt) }
-
     var records: [[String: Any]] = []
-
     while sqlite3_step(stmt) == SQLITE_ROW {
-      let record: [String: Any] = [
-        "id":         String(cString: sqlite3_column_text(stmt, 0)),
-        "workerId":   String(cString: sqlite3_column_text(stmt, 1)),
-        "timestamp":  sqlite3_column_int64(stmt, 2),
-        "latitude":   sqlite3_column_double(stmt, 3),
-        "longitude":  sqlite3_column_double(stmt, 4),
+      var record: [String: Any] = [
+        "id": columnText(stmt, 0),
+        "workerId": columnText(stmt, 1),
+        "timestamp": Double(sqlite3_column_int64(stmt, 2)),
         "confidence": sqlite3_column_double(stmt, 5),
-        "signature":  String(cString: sqlite3_column_text(stmt, 6))
+        "deviceId": columnText(stmt, 6),
+        "signature": columnText(stmt, 7),
       ]
+      if sqlite3_column_type(stmt, 3) != SQLITE_NULL {
+        record["latitude"] = sqlite3_column_double(stmt, 3)
+      }
+      if sqlite3_column_type(stmt, 4) != SQLITE_NULL {
+        record["longitude"] = sqlite3_column_double(stmt, 4)
+      }
       records.append(record)
     }
     return records
   }
 
-  // MARK: markSynced
-
-  /// Marks the given record IDs as synced in the database.
-  func markSynced(ids: [String]) -> Bool {
-    guard let db = db, !ids.isEmpty else { return true }
-
-    // Build parameterised IN clause
+  func markSynced(ids: [String]) throws {
+    guard !ids.isEmpty else { return }
     let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
-    let sql = "UPDATE attendance_log SET synced = 1 WHERE id IN (\(placeholders));"
-
-    var stmt: OpaquePointer?
-    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+    let stmt = try prepare("UPDATE attendance_log SET synced = 1 WHERE id IN (\(placeholders));")
     defer { sqlite3_finalize(stmt) }
+    for (index, id) in ids.enumerated() { bindText(stmt, Int32(index + 1), id) }
+    try step(stmt)
+  }
 
-    for (index, id) in ids.enumerated() {
-      sqlite3_bind_text(stmt, Int32(index + 1), (id as NSString).utf8String, -1, nil)
+  func purgeSynced() throws {
+    try exec("DELETE FROM attendance_log WHERE synced = 1;")
+  }
+
+  func close() {
+    if let db { sqlite3_close(db) }
+    db = nil
+  }
+
+  deinit { close() }
+
+  // MARK: SQLite helpers
+
+  private func exec(_ sql: String) throws {
+    guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw dbError() }
+  }
+
+  private func prepare(_ sql: String) throws -> OpaquePointer? {
+    var stmt: OpaquePointer?
+    guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { throw dbError() }
+    return stmt
+  }
+
+  private func step(_ stmt: OpaquePointer?) throws {
+    guard sqlite3_step(stmt) == SQLITE_DONE else { throw dbError() }
+  }
+
+  private func queryString(_ sql: String) throws -> String? {
+    let stmt = try prepare(sql)
+    defer { sqlite3_finalize(stmt) }
+    guard sqlite3_step(stmt) == SQLITE_ROW, let text = sqlite3_column_text(stmt, 0) else { return nil }
+    return String(cString: text)
+  }
+
+  private func bindText(_ stmt: OpaquePointer?, _ index: Int32, _ value: String) {
+    sqlite3_bind_text(stmt, index, value, -1, sqliteTransient)
+  }
+
+  private func columnText(_ stmt: OpaquePointer?, _ index: Int32) -> String {
+    guard let text = sqlite3_column_text(stmt, index) else { return "" }
+    return String(cString: text)
+  }
+
+  private func dbError() -> BiometricError {
+    var message = "unknown error"
+    if let db, let cMessage = sqlite3_errmsg(db) {
+      message = String(cString: cMessage)
     }
-
-    return sqlite3_step(stmt) == SQLITE_DONE
-  }
-
-  // MARK: purgeSynced
-
-  /// Deletes all records that have already been synced, satisfying the local-purge requirement.
-  func purgeSynced() -> Bool {
-    guard let db = db else { return false }
-    return sqlite3_exec(db, "DELETE FROM attendance_log WHERE synced = 1;", nil, nil, nil) == SQLITE_OK
-  }
-
-  deinit {
-    if let db = db { sqlite3_close(db) }
+    return BiometricError(code: "DB_ERROR", message: message)
   }
 }
 
 // MARK: - FaceEmbedder
 
-/// Loads MobileFaceNet.mlmodel and produces L2-normalised 128-d face embeddings.
+/// Runs a Core ML MobileFaceNet export on a 112x112 face crop.
 final class FaceEmbedder {
+  private var model: MLModel?
 
-  var model: MLModel? = nil
-
-  // MARK: load
-
-  /// Attempts to load `MobileFaceNet.mlmodel` from the main bundle.
-  /// Returns `true` on success.
-  func load() -> Bool {
-    guard let modelURL = Bundle.main.url(forResource: "MobileFaceNet",
-                                         withExtension: "mlmodelc")
-            ?? Bundle.main.url(forResource: "MobileFaceNet",
-                               withExtension: "mlmodel") else {
-      return false
+  func load() throws {
+    guard let url = Bundle.main.url(forResource: "MobileFaceNet", withExtension: "mlmodelc") else {
+      throw BiometricError(
+        code: "MODEL_NOT_FOUND",
+        message: "MobileFaceNet.mlmodelc is not in the app bundle. iOS support is experimental; see docs/MODELS.md.")
     }
-
-    do {
-      model = try MLModel(contentsOf: modelURL)
-      return true
-    } catch {
-      return false
-    }
+    model = try MLModel(contentsOf: url)
   }
 
-  // MARK: embed
-
-  /// Runs the CoreML model on a 112×112 pixel buffer and returns the L2-normalised embedding.
-  /// Returns `nil` if the model isn't loaded or inference fails.
-  func embed(pixelBuffer: CVPixelBuffer) -> [Float]? {
-    guard let model = model else { return nil }
-
-    // Resize to 112×112 using Vision
-    guard let resized = resize(pixelBuffer: pixelBuffer, to: CGSize(width: 112, height: 112))
+  /// Returns the L2-normalized embedding, or nil if inference fails.
+  func embed(_ image: CGImage) -> [Float]? {
+    guard let model, let buffer = pixelBuffer(from: image, side: 112) else { return nil }
+    guard
+      let input = try? MLDictionaryFeatureProvider(dictionary: ["input": MLFeatureValue(pixelBuffer: buffer)]),
+      let output = try? model.prediction(from: input)
     else { return nil }
 
-    // Build MLFeatureProvider from the pixel buffer
-    guard let inputFeature = try? MLDictionaryFeatureProvider(
-      dictionary: ["input": MLFeatureValue(pixelBuffer: resized)]
-    ) else { return nil }
-
-    guard let output = try? model.prediction(from: inputFeature) else { return nil }
-
-    // Extract the first multi-array output feature
-    var embedding: [Float] = []
-    for featureName in output.featureNames {
-      if let multiArray = output.featureValue(for: featureName)?.multiArrayValue {
-        for i in 0 ..< multiArray.count {
-          embedding.append(Float(truncating: multiArray[i]))
-        }
-        break
-      }
+    for name in output.featureNames {
+      guard let array = output.featureValue(for: name)?.multiArrayValue else { continue }
+      let values = (0..<array.count).map { Float(truncating: array[$0]) }
+      let norm = values.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
+      return norm > 0 ? values.map { $0 / norm } : values
     }
-
-    guard !embedding.isEmpty else { return nil }
-    return l2Normalize(embedding)
+    return nil
   }
 
-  // MARK: - Private helpers
-
-  private func resize(pixelBuffer: CVPixelBuffer, to size: CGSize) -> CVPixelBuffer? {
-    var resized: CVPixelBuffer?
-    CVPixelBufferCreate(kCFAllocatorDefault,
-                        Int(size.width), Int(size.height),
-                        kCVPixelFormatType_32BGRA,
-                        nil, &resized)
-    guard let dest = resized else { return nil }
-
-    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-    CVPixelBufferLockBaseAddress(dest, [])
-    defer {
-      CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
-      CVPixelBufferUnlockBaseAddress(dest, [])
-    }
-
-    guard let srcBase = CVPixelBufferGetBaseAddress(pixelBuffer),
-          let dstBase = CVPixelBufferGetBaseAddress(dest)
+  private func pixelBuffer(from image: CGImage, side: Int) -> CVPixelBuffer? {
+    var buffer: CVPixelBuffer?
+    let attrs: [String: Any] = [
+      kCVPixelBufferCGImageCompatibilityKey as String: true,
+      kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+    ]
+    CVPixelBufferCreate(kCFAllocatorDefault, side, side, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &buffer)
+    guard let buffer else { return nil }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+    let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+    guard
+      let context = CGContext(
+        data: CVPixelBufferGetBaseAddress(buffer), width: side, height: side, bitsPerComponent: 8,
+        bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: bitmapInfo)
     else { return nil }
-
-    let srcWidth  = CVPixelBufferGetWidth(pixelBuffer)
-    let srcHeight = CVPixelBufferGetHeight(pixelBuffer)
-    let srcBytes  = CVPixelBufferGetBytesPerRow(pixelBuffer)
-    let dstBytes  = CVPixelBufferGetBytesPerRow(dest)
-
-    let srcCtx = CGContext(data: srcBase,
-                           width: srcWidth, height: srcHeight,
-                           bitsPerComponent: 8, bytesPerRow: srcBytes,
-                           space: CGColorSpaceCreateDeviceRGB(),
-                           bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
-    guard let srcImage = srcCtx?.makeImage() else { return nil }
-
-    let dstCtx = CGContext(data: dstBase,
-                           width: Int(size.width), height: Int(size.height),
-                           bitsPerComponent: 8, bytesPerRow: dstBytes,
-                           space: CGColorSpaceCreateDeviceRGB(),
-                           bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
-    dstCtx?.draw(srcImage, in: CGRect(origin: .zero, size: size))
-    return dest
-  }
-
-  private func l2Normalize(_ vector: [Float]) -> [Float] {
-    let magnitude = sqrt(vector.reduce(0) { $0 + $1 * $1 })
-    guard magnitude > 0 else { return vector }
-    return vector.map { $0 / magnitude }
+    context.interpolationQuality = .high
+    context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+    return buffer
   }
 }
 
 // MARK: - LivenessTracker
 
-/// Frame-by-frame eye-aspect-ratio (EAR) blink counter for passive liveness detection.
+/// Experimental blink counter over 468-point Face Mesh landmarks, matching
+/// Android's LivenessEngine. Nothing in this package produces such landmarks yet.
 final class LivenessTracker {
+  private let earClosed: Float = 0.20
+  private let requiredBlinks = 2
+  private var blinkCount = 0
+  private var eyeWasClosed = false
+  private var earHistory: [Float] = []
 
-  let EAR_THRESHOLD: Float = 0.20
-  let BLINK_MIN = 2
+  func evaluate(_ landmarks: [[Float]]) -> (isLive: Bool, isBlink: Bool, blinkCount: Int, ear: Float) {
+    guard landmarks.count >= 468 else { return (false, false, 0, 0) }
+    let left = eyeAspectRatio(landmarks, [362, 385, 387, 263, 373, 380])
+    let right = eyeAspectRatio(landmarks, [33, 160, 158, 133, 153, 144])
+    let ear = (left + right) / 2
+    earHistory.append(ear)
+    if earHistory.count > 30 { earHistory.removeFirst(earHistory.count - 30) }
 
-  private(set) var history: [(eyesOpen: Bool, timestamp: Date)] = []
-  private(set) var blinkCount = 0
-  private(set) var lastEyeState = true
-
-  // MARK: updateFrame
-
-  /// Feed each camera frame's per-eye openness scores (0.0 → closed, 1.0 → open).
-  func updateFrame(leftEyeOpen: Float, rightEyeOpen: Float) {
-    let avg = (leftEyeOpen + rightEyeOpen) / 2.0
-    let eyesOpen = avg > EAR_THRESHOLD
-
-    // Detect falling edge → blink
-    if lastEyeState == true && eyesOpen == false {
-      blinkCount += 1
-    }
-    lastEyeState = eyesOpen
-
-    history.append((eyesOpen: eyesOpen, timestamp: Date()))
-
-    // Keep only last 30 frames
-    if history.count > 30 {
-      history.removeFirst(history.count - 30)
-    }
-  }
-
-  // MARK: isLive
-
-  /// Returns `true` once the required minimum blink count has been observed.
-  func isLive() -> Bool {
-    return blinkCount >= BLINK_MIN
-  }
-
-  // MARK: reset
-
-  /// Clears blink history — call between sessions.
-  func reset() {
-    blinkCount   = 0
-    history      = []
-    lastEyeState = true
-  }
-
-  // MARK: evaluateEAR (MediaPipe 468-landmark path)
-
-  /// Accepts the full 468-point MediaPipe Face Mesh landmark array (each point is
-  /// [x, y, z] in normalised image coords) and returns the current liveness state.
-  /// Uses the same eye-corner indices and EAR formula as LivenessEngine.kt so both
-  /// platforms behave identically when the native checkLiveness() path is used.
-  func evaluateEAR(landmarks: [[Float]]) -> (isLive: Bool, isBlink: Bool, blinkCount: Int, earValue: Float) {
-    let leftIdx  = [362, 385, 387, 263, 373, 380]
-    let rightIdx = [33,  160, 158, 133, 153, 144]
-
-    let earLeft  = earFromIndices(landmarks, leftIdx)
-    let earRight = earFromIndices(landmarks, rightIdx)
-    let avg      = (earLeft + earRight) / 2.0
-
-    let eyesOpen = avg >= EAR_THRESHOLD
-    // Count blink on the re-open transition (closed → open), not on close.
-    let isBlink  = !lastEyeState && eyesOpen
+    let closed = ear < earClosed
+    // Counted on re-opening, so a still photo with closed eyes never counts.
+    let isBlink = eyeWasClosed && !closed
     if isBlink { blinkCount += 1 }
-    lastEyeState = eyesOpen
+    eyeWasClosed = closed
 
-    history.append((eyesOpen: eyesOpen, timestamp: Date()))
-    if history.count > 30 { history.removeFirst(history.count - 30) }
-
-    // Require both a minimum blink count AND non-trivial EAR variance.
-    // A looped video of someone blinking has very low EAR variance across
-    // repeated cycles; a real eye has micro-variation every frame.
-    let earVariance = computeEARVariance()
-    let isLive = blinkCount >= BLINK_MIN && earVariance > 0.0005
-    return (isLive, isBlink, blinkCount, avg)
+    let mean = earHistory.reduce(Float(0), +) / Float(earHistory.count)
+    let variance = earHistory.reduce(Float(0)) { $0 + ($1 - mean) * ($1 - mean) } / Float(earHistory.count)
+    return (blinkCount >= requiredBlinks && variance > 0.0005, isBlink, blinkCount, ear)
   }
 
-  private func computeEARVariance() -> Float {
-    guard !history.isEmpty else { return 0 }
-    // Approximate variance using the eyesOpen bool as 0/1 signal.
-    // A looped video has a fixed open/closed pattern → very low variance.
-    let vals = history.map { $0.eyesOpen ? Float(1) : Float(0) }
-    let mean = vals.reduce(0, +) / Float(vals.count)
-    return vals.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Float(vals.count)
-  }
-
-  // MARK: - Private EAR helpers
-
-  private func earFromIndices(_ lm: [[Float]], _ idx: [Int]) -> Float {
-    guard idx.count == 6 else { return 0 }
-    let p = idx.map { i -> [Float] in i < lm.count ? lm[i] : [0, 0, 0] }
-    let h = eucl(p[0], p[3])
-    guard h > 0 else { return 0 }
-    // EAR = (dist(p1,p5) + dist(p2,p4)) / (2 * dist(p0,p3))
-    return (eucl(p[1], p[5]) + eucl(p[2], p[4])) / (2 * h)
-  }
-
-  private func eucl(_ a: [Float], _ b: [Float]) -> Float {
-    let dx = (a.count > 0 ? a[0] : 0) - (b.count > 0 ? b[0] : 0)
-    let dy = (a.count > 1 ? a[1] : 0) - (b.count > 1 ? b[1] : 0)
-    return sqrt(dx * dx + dy * dy)
+  private func eyeAspectRatio(_ p: [[Float]], _ i: [Int]) -> Float {
+    func distance(_ a: [Float], _ b: [Float]) -> Float {
+      guard a.count >= 2, b.count >= 2 else { return 0 }
+      let dx = a[0] - b[0]
+      let dy = a[1] - b[1]
+      return (dx * dx + dy * dy).squareRoot()
+    }
+    let width = distance(p[i[0]], p[i[3]])
+    guard width > 0 else { return 0 }
+    return (distance(p[i[1]], p[i[5]]) + distance(p[i[2]], p[i[4]])) / (2 * width)
   }
 }
 
-// MARK: - DatalakeBiometric (React Native Bridge)
+// MARK: - React Native module
 
 @objc(DatalakeBiometric)
 class DatalakeBiometric: NSObject {
@@ -489,43 +407,88 @@ class DatalakeBiometric: NSObject {
   @objc static func moduleName() -> String! { return "DatalakeBiometric" }
   @objc static func requiresMainQueueSetup() -> Bool { return false }
 
-  private let store      = EmbeddingStore()
-  private let embedder   = FaceEmbedder()
-  private let liveness   = LivenessTracker()
-  private let keyVault   = KeyVault()
+  private let store = EmbeddingStore()
+  private let embedder = FaceEmbedder()
+  private let liveness = LivenessTracker()
+  private let keyVault = KeyVault()
   private var initialized = false
+  private var matchThreshold = defaultMatchThreshold
+  private var hmacKey = SymmetricKey(size: .bits256)
+  private let queue = DispatchQueue(label: "com.datalakebiometric", qos: .userInitiated)
 
-  private let queue = DispatchQueue(label: "com.datalake.biometric", qos: .userInitiated)
-
-  // MARK: - initialize
-
-  @objc func initialize(
+  /// Runs `work` on the module queue and settles the promise with its result.
+  private func run(
     _ resolve: @escaping RCTPromiseResolveBlock,
-    reject: @escaping RCTPromiseRejectBlock
+    _ reject: @escaping RCTPromiseRejectBlock,
+    _ work: @escaping () throws -> Any
   ) {
-    queue.async { [weak self] in
-      guard let self = self else { return }
-
-      let docs   = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)[0]
-      let dbPath = (docs as NSString).appendingPathComponent("biometric.db")
-
-      let symKey     = self.keyVault.getOrCreateKey()
-      let passphrase = symKey.withUnsafeBytes { Data($0) }.base64EncodedString()
-
-      guard self.store.open(path: dbPath, passphrase: passphrase) else {
-        reject("DB_OPEN_FAILED", "Failed to open encrypted database", nil)
-        return
+    queue.async {
+      do {
+        resolve(try work())
+      } catch let error as BiometricError {
+        reject(error.code, error.message, nil)
+      } catch {
+        reject("NATIVE_ERROR", error.localizedDescription, error)
       }
-      guard self.embedder.load() else {
-        reject("MODEL_LOAD_FAILED", "MobileFaceNet.mlmodel not found in bundle", nil)
-        return
-      }
-      self.initialized = true
-      resolve(true)
     }
   }
 
-  // MARK: - enrollWorker
+  private func requireInitialized() throws {
+    if !initialized {
+      throw BiometricError(code: "NOT_INITIALIZED", message: "Call initialize() first.")
+    }
+  }
+
+  /// Same rules as Android: 1 to 128 printable characters, no "|".
+  private func requireValidId(_ id: String) throws {
+    let blank = id.trimmingCharacters(in: .whitespaces).isEmpty
+    let hasControl = id.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    if blank || id.count > 128 || id.contains("|") || hasControl {
+      throw BiometricError(
+        code: "INVALID_ARGUMENT",
+        message: "workerId must be 1 to 128 printable characters and must not contain '|'.")
+    }
+  }
+
+  @objc func initialize(
+    _ options: NSDictionary?,
+    resolve: @escaping RCTPromiseResolveBlock,
+    reject: @escaping RCTPromiseRejectBlock
+  ) {
+    run(resolve, reject) { [self] in
+      if let value = (options?["matchThreshold"] as? NSNumber)?.doubleValue {
+        guard value >= 0 && value <= 1 else {
+          throw BiometricError(code: "INVALID_ARGUMENT", message: "matchThreshold must be from 0 to 1.")
+        }
+        matchThreshold = value
+      }
+      // minQuality is accepted for API parity; iOS has no quality gate yet.
+      if initialized { return true }
+
+      let fm = FileManager.default
+      let directory = try fm.url(
+        for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+      var dbURL = directory.appendingPathComponent("biometric.db")
+      // Earlier builds kept an unusable database in Documents; remove it.
+      if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+        try? fm.removeItem(at: docs.appendingPathComponent("biometric.db"))
+      }
+
+      let dbKey = try keyVault.secret(named: "db-passphrase")
+      try store.open(url: dbURL, key: dbKey)
+      var values = URLResourceValues()
+      values.isExcludedFromBackup = true
+      try? dbURL.setResourceValues(values)
+      try? fm.setAttributes(
+        [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: dbURL.path)
+
+      let hmacData = try keyVault.secret(named: "hmac-key")
+      hmacKey = SymmetricKey(data: hmacData)
+      try embedder.load()
+      initialized = true
+      return true
+    }
+  }
 
   @objc func enrollWorker(
     _ workerId: String,
@@ -534,50 +497,25 @@ class DatalakeBiometric: NSObject {
     resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
-    queue.async { [weak self] in
-      guard let self = self, self.initialized else {
-        reject("NOT_INITIALIZED", "Call initialize() first", nil)
-        return
-      }
-
+    run(resolve, reject) { [self] in
+      try requireInitialized()
+      try requireValidId(workerId)
       var embeddings: [[Float]] = []
-
-      for base64 in frames {
-        guard let data   = Data(base64Encoded: base64,
-                                options: .ignoreUnknownCharacters),
-              let image  = UIImage(data: data),
-              let buffer = self.pixelBuffer(from: image, hint: hint, imageSize: image.size)
-        else { continue }
-
-        if let emb = self.embedder.embed(pixelBuffer: buffer) {
-          embeddings.append(emb)
+      for frame in frames {
+        if let crop = faceCrop(base64: frame, hint: hint), let embedding = embedder.embed(crop) {
+          embeddings.append(embedding)
         }
       }
-
-      guard !embeddings.isEmpty else {
-        reject("NO_EMBEDDINGS", "No valid face frames could be embedded", nil)
-        return
+      guard let dim = embeddings.first?.count, embeddings.allSatisfy({ $0.count == dim }) else {
+        throw BiometricError(code: "NO_FACE", message: "No face could be embedded. iOS requires a face box.")
       }
-
-      // Element-wise average
-      let dim = embeddings[0].count
-      var avg = [Float](repeating: 0, count: dim)
-      for emb in embeddings {
-        for i in 0 ..< dim { avg[i] += emb[i] }
-      }
-      let n = Float(embeddings.count)
-      avg = avg.map { $0 / n }
-      // Re-normalise after averaging so the stored vector is unit-length.
-      // Without this the cosine dot-product is no longer bounded [0, 1].
-      let mag = sqrt(avg.reduce(0) { $0 + $1 * $1 })
-      if mag > 0 { avg = avg.map { $0 / mag } }
-
-      self.store.insertEmbedding(workerId: workerId, embedding: avg)
-      resolve(["success": true, "framesUsed": frames.count])
+      var sum = [Float](repeating: 0, count: dim)
+      for e in embeddings { for i in 0..<dim { sum[i] += e[i] } }
+      let norm = sum.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot()
+      try store.saveTemplate(workerId: workerId, embedding: norm > 0 ? sum.map { $0 / norm } : sum)
+      return ["success": true, "framesUsed": embeddings.count] as [String: Any]
     }
   }
-
-  // MARK: - verifyWorker
 
   @objc func verifyWorker(
     _ base64Image: String,
@@ -585,218 +523,145 @@ class DatalakeBiometric: NSObject {
     resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
-    queue.async { [weak self] in
-      guard let self = self, self.initialized else {
-        reject("NOT_INITIALIZED", "Call initialize() first", nil)
-        return
+    run(resolve, reject) { [self] in
+      try requireInitialized()
+      guard let crop = faceCrop(base64: base64Image, hint: hint), let query = embedder.embed(crop) else {
+        return ["status": "NO_FACE"] as [String: Any]
       }
-
-      guard let data   = Data(base64Encoded: base64Image,
-                              options: .ignoreUnknownCharacters),
-            let image  = UIImage(data: data),
-            let buffer = self.pixelBuffer(from: image, hint: hint, imageSize: image.size),
-            let queryEmbedding = self.embedder.embed(pixelBuffer: buffer)
-      else {
-        reject("DECODE_FAILED", "Cannot decode or embed the provided image", nil)
-        return
+      guard let match = try store.bestMatch(for: query, threshold: matchThreshold) else {
+        return ["status": "NO_MATCH"] as [String: Any]
       }
-
-      let allEmbeddings = self.store.queryAllEmbeddings()
-      var bestScore: Double = -1
-      var bestWorkerId = ""
-
-      for entry in allEmbeddings {
-        let score = self.cosineSimilarity(queryEmbedding, entry.embedding)
-        if score > bestScore {
-          bestScore     = score
-          bestWorkerId  = entry.workerId
-        }
-      }
-
-      let THRESHOLD = 0.65
-      if bestScore > THRESHOLD {
-        resolve([
-          "status":     "MATCH",
-          "workerId":   bestWorkerId,
-          "confidence": bestScore
-        ])
-      } else {
-        resolve(["status": "NO_MATCH"])
-      }
+      return ["status": "MATCH", "workerId": match.workerId, "confidence": match.similarity] as [String: Any]
     }
   }
-
-  // MARK: - logAndQueueAttendance
-
-  @objc func logAndQueueAttendance(
-    _ workerId: String,
-    latitude: Double,
-    longitude: Double,
-    confidence: Double,
-    resolve: @escaping RCTPromiseResolveBlock,
-    reject: @escaping RCTPromiseRejectBlock
-  ) {
-    queue.async { [weak self] in
-      guard let self = self, self.initialized else {
-        reject("NOT_INITIALIZED", "Call initialize() first", nil)
-        return
-      }
-
-      let id        = UUID().uuidString
-      let ts        = Int64(Date().timeIntervalSince1970 * 1000)
-      let record    = "\(workerId)|\(ts)|\(latitude)|\(longitude)|\(confidence)"
-      let signature = self.keyVault.signRecord(record)
-
-      self.store.insertAttendance(
-        id: id, workerId: workerId, timestamp: ts,
-        lat: latitude, lng: longitude, confidence: confidence,
-        signature: signature
-      )
-      resolve(true)
-    }
-  }
-
-  // MARK: - checkLiveness
 
   @objc func checkLiveness(
     _ landmarks: NSArray,
     resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
-    queue.async { [weak self] in
-      guard let self = self else { return }
-
-      // Convert NSArray<NSArray<NSNumber>> → [[Float]]
-      let pts: [[Float]] = (landmarks as? [[NSNumber]] ?? []).map { pt in
-        [
-          pt.count > 0 ? pt[0].floatValue : 0,
-          pt.count > 1 ? pt[1].floatValue : 0,
-          pt.count > 2 ? pt[2].floatValue : 0,
-        ]
-      }
-
-      guard pts.count >= 468 else {
-        resolve(["isLive": false, "isBlink": false, "blinkCount": 0, "earValue": 0.0])
-        return
-      }
-
-      let result = self.liveness.evaluateEAR(landmarks: pts)
-      resolve([
-        "isLive":     result.isLive,
-        "isBlink":    result.isBlink,
-        "blinkCount": result.blinkCount,
-        "earValue":   result.earValue,
-      ])
+    run(resolve, reject) { [self] in
+      let rows = landmarks as? [[NSNumber]] ?? []
+      let points = rows.map { row in row.map { $0.floatValue } }
+      let r = liveness.evaluate(points)
+      let result: [String: Any] = [
+        "isLive": r.isLive, "isBlink": r.isBlink, "blinkCount": r.blinkCount, "earValue": r.ear,
+      ]
+      return result
     }
   }
 
-  // MARK: - getPendingAttendanceRecords
+  @objc func logAndQueueAttendance(
+    _ workerId: String,
+    confidence: Double,
+    location: NSDictionary?,
+    resolve: @escaping RCTPromiseResolveBlock,
+    reject: @escaping RCTPromiseRejectBlock
+  ) {
+    run(resolve, reject) { [self] in
+      try requireInitialized()
+      try requireValidId(workerId)
+      let latitude = (location?["latitude"] as? NSNumber)?.doubleValue
+      let longitude = (location?["longitude"] as? NSNumber)?.doubleValue
+      if let latitude, let longitude, abs(latitude) > 90 || abs(longitude) > 180 {
+        throw BiometricError(code: "INVALID_ARGUMENT", message: "Location is out of range.")
+      }
+      let id = UUID().uuidString.lowercased()
+      let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+      // Per-vendor install ID, the closest iOS equivalent of Android's ANDROID_ID.
+      let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+      let payload = AttendanceSignature.payload(
+        id: id, workerId: workerId, timestampMs: timestamp, latitude: latitude, longitude: longitude,
+        confidence: confidence, deviceId: deviceId)
+      let mac = HMAC<SHA256>.authenticationCode(for: Data(payload.utf8), using: hmacKey)
+      try store.insertAttendance(
+        id: id, workerId: workerId, timestampMs: timestamp, latitude: latitude, longitude: longitude,
+        confidence: confidence, deviceId: deviceId, signature: Data(mac).base64EncodedString())
+      return true
+    }
+  }
 
   @objc func getPendingAttendanceRecords(
     _ resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
-    queue.async { [weak self] in
-      guard let self = self else { return }
-      resolve(self.store.getPending())
+    run(resolve, reject) { [self] in
+      try requireInitialized()
+      return try store.pendingRecords()
     }
   }
-
-  // MARK: - markRecordsSynced
 
   @objc func markRecordsSynced(
     _ ids: [String],
     resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
-    queue.async { [weak self] in
-      guard let self = self else { return }
-      _ = self.store.markSynced(ids: ids)
-      resolve(NSNull())
+    run(resolve, reject) { [self] in
+      try requireInitialized()
+      try store.markSynced(ids: ids)
+      return true
     }
   }
-
-  // MARK: - purgeSyncedRecords
 
   @objc func purgeSyncedRecords(
     _ resolve: @escaping RCTPromiseResolveBlock,
     reject: @escaping RCTPromiseRejectBlock
   ) {
-    queue.async { [weak self] in
-      guard let self = self else { return }
-      _ = self.store.purgeSynced()
-      resolve(true)
+    run(resolve, reject) { [self] in
+      try requireInitialized()
+      try store.purgeSynced()
+      return true
     }
   }
 
-  // MARK: - Private helpers
-
-  /// Converts UIImage → CVPixelBuffer, applying hint crop (normalised) or a centre crop.
-  private func pixelBuffer(from image: UIImage,
-                           hint: NSDictionary?,
-                           imageSize: CGSize) -> CVPixelBuffer? {
-    var cropRect: CGRect
-
-    if let hint = hint,
-       let nx = hint["nx"] as? CGFloat,
-       let ny = hint["ny"] as? CGFloat,
-       let nw = hint["nw"] as? CGFloat,
-       let nh = hint["nh"] as? CGFloat {
-      cropRect = CGRect(x: nx * imageSize.width,
-                        y: ny * imageSize.height,
-                        width: nw * imageSize.width,
-                        height: nh * imageSize.height)
-    } else {
-      // Centre square crop
-      let side = min(imageSize.width, imageSize.height)
-      cropRect = CGRect(x: (imageSize.width  - side) / 2,
-                        y: (imageSize.height - side) / 2,
-                        width: side, height: side)
+  @objc func getSecureRandomBytes(
+    _ count: Double,
+    resolve: @escaping RCTPromiseResolveBlock,
+    reject: @escaping RCTPromiseRejectBlock
+  ) {
+    run(resolve, reject) {
+      let n = Int(count)
+      guard n >= 1 && n <= 1024 else {
+        throw BiometricError(code: "INVALID_ARGUMENT", message: "count must be from 1 to 1024.")
+      }
+      var bytes = [UInt8](repeating: 0, count: n)
+      guard SecRandomCopyBytes(kSecRandomDefault, n, &bytes) == errSecSuccess else {
+        throw BiometricError(code: "NATIVE_ERROR", message: "Secure random source failed.")
+      }
+      return bytes.map { Int($0) }
     }
+  }
 
-    // Render cropped region into a new UIImage
-    UIGraphicsBeginImageContextWithOptions(cropRect.size, false, 1.0)
-    defer { UIGraphicsEndImageContext() }
-    image.draw(at: CGPoint(x: -cropRect.origin.x, y: -cropRect.origin.y))
-    guard let cropped = UIGraphicsGetImageFromCurrentImageContext(),
-          let cgImage = cropped.cgImage
+  // MARK: Helpers
+
+  /// Decodes the JPEG in memory and crops a padded square around the face box,
+  /// like Android. Returns nil without a face box: iOS has no detector here.
+  private func faceCrop(base64: String, hint: NSDictionary?) -> CGImage? {
+    guard let hint,
+      let nx = (hint["nx"] as? NSNumber)?.doubleValue,
+      let ny = (hint["ny"] as? NSNumber)?.doubleValue,
+      let nw = (hint["nw"] as? NSNumber)?.doubleValue,
+      let nh = (hint["nh"] as? NSNumber)?.doubleValue,
+      nw > 0, nh > 0,
+      let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
+      let image = UIImage(data: data)
     else { return nil }
 
-    var pixelBuffer: CVPixelBuffer?
-    let attrs: [String: Any] = [
-      kCVPixelBufferCGImageCompatibilityKey as String: true,
-      kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
-    ]
-    CVPixelBufferCreate(kCFAllocatorDefault,
-                        cgImage.width, cgImage.height,
-                        kCVPixelFormatType_32ARGB,
-                        attrs as CFDictionary,
-                        &pixelBuffer)
+    // Render once to apply the EXIF orientation, so the box matches the pixels.
+    let size = image.size
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let upright = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: size))
+    }
+    guard let cg = upright.cgImage else { return nil }
 
-    guard let buffer = pixelBuffer else { return nil }
-    CVPixelBufferLockBaseAddress(buffer, [])
-    defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-
-    guard let context = CGContext(
-      data: CVPixelBufferGetBaseAddress(buffer),
-      width: cgImage.width, height: cgImage.height,
-      bitsPerComponent: 8,
-      bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-      space: CGColorSpaceCreateDeviceRGB(),
-      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-    ) else { return nil }
-
-    context.draw(cgImage, in: CGRect(x: 0, y: 0,
-                                     width: cgImage.width,
-                                     height: cgImage.height))
-    return buffer
-  }
-
-  /// Dot-product cosine similarity between two L2-normalised vectors.
-  private func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Double {
-    guard a.count == b.count else { return -1 }
-    var dot: Float = 0
-    for i in 0 ..< a.count { dot += a[i] * b[i] }
-    return Double(dot)
+    // Widen the box by 20% per side, as on Android (forehead and chin).
+    let w = Double(cg.width)
+    let h = Double(cg.height)
+    let side = min(max(nw * w, nh * h) * 1.4, min(w, h))
+    let x = min(max((nx + nw / 2) * w - side / 2, 0), w - side)
+    let y = min(max((ny + nh / 2) * h - side / 2, 0), h - side)
+    return cg.cropping(to: CGRect(x: x, y: y, width: side, height: side).integral)
   }
 }

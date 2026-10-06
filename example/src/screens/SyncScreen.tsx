@@ -1,15 +1,18 @@
+// SPDX-License-Identifier: Apache-2.0
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Text,
   View,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
   Alert,
+  StyleSheet,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { BiometricSDK, type AttendanceRecord } from 'datalake-biometric';
-import { SYNC_ENDPOINT } from '../config';
+import { DEFAULT_SYNC_ENDPOINT } from '../config';
 import { useTheme } from '../ThemeContext';
 import { s } from '../theme';
 import type { Screen } from '../types';
@@ -18,22 +21,33 @@ type Props = {
   navigate: (screen: Screen) => void;
 };
 
+type ServerResult = { id: string; status: string };
+
+/**
+ * Uploads queued attendance records to a self-hosted backend
+ * (backend/template.yaml). Endpoint and token live only in memory for this
+ * screen, so they are never written to disk or committed.
+ */
 export default function SyncScreen({ navigate }: Props) {
   const { colors } = useTheme();
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  // Track whether we're online so the auto-sync fires at most once per
-  // offline→online transition (not on every NetInfo poll).
+  const [endpoint, setEndpoint] = useState(DEFAULT_SYNC_ENDPOINT ?? '');
+  const [token, setToken] = useState('');
+  const configured = endpoint.trim().length > 0 && token.trim().length > 0;
+
+  // Latest values for the NetInfo listener, which is registered only once.
+  const latest = useRef({ configured, syncing });
+  latest.current = { configured, syncing };
   const wasOfflineRef = useRef(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const pending = await BiometricSDK.getPendingRecords();
-      setRecords(pending);
+      setRecords(await BiometricSDK.getPendingRecords());
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not load records');
+      Alert.alert('Error', e?.message ?? 'Could not load records.');
     } finally {
       setLoading(false);
     }
@@ -43,116 +57,115 @@ export default function SyncScreen({ navigate }: Props) {
     refresh();
   }, [refresh]);
 
-  // Auto-sync when connectivity is restored and there are pending records.
-  useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener((state) => {
-      const isOnline = state.isConnected && state.isInternetReachable !== false;
-      if (isOnline && wasOfflineRef.current) {
-        wasOfflineRef.current = false;
-        // Re-fetch and sync if there are records waiting.
-        BiometricSDK.getPendingRecords()
-          .then((pending) => {
-            if (pending.length > 0) {
-              setRecords(pending);
-              // Trigger sync without user interaction.
-              syncRecords(pending);
-            }
-          })
-          .catch(() => {});
-      }
-      if (!isOnline) {
-        wasOfflineRef.current = true;
-      }
-    });
-    return () => unsubscribe();
-    // syncRecords intentionally not in deps — we use the stable reference below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const syncRecords = useCallback(
     async (toSync: AttendanceRecord[]) => {
-      if (toSync.length === 0 || syncing) return;
+      if (toSync.length === 0 || !configured) return;
       setSyncing(true);
       try {
-        const ids = toSync.map((r) => r.id);
-
-        if (SYNC_ENDPOINT) {
-          // POST to the deployed AWS Lambda sync endpoint. Each record carries
-          // an HMAC-SHA256 signature for audit; the Lambda writes idempotently
-          // to DynamoDB (see backend/lambda_sync_handler.py).
-          const response = await fetch(SYNC_ENDPOINT, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ records: toSync }),
-          });
-          if (!response.ok) {
-            throw new Error(
-              `Server returned ${response.status}: ${await response.text()}`
-            );
-          }
-          const result = await response.json();
-          const summary = result?.summary ?? {};
-          const ok = (summary.stored ?? 0) + (summary.duplicate ?? 0);
-          const failed = summary.failed ?? 0;
-
-          // Only mark records the server actually accepted (stored or duplicate).
-          // Records the server rejected keep their pending status so they are
-          // retried on the next sync.
-          const perRecord: Array<{ id: string; status: string }> =
-            result?.results ?? ids.map((id) => ({ id, status: 'stored' }));
-          const syncedIds = perRecord
-            .filter((r) => r.status === 'stored' || r.status === 'duplicate')
-            .map((r) => r.id);
-
-          if (syncedIds.length > 0) {
-            await BiometricSDK.markSynced(syncedIds);
-            // Purge synced records from local DB after server ACK (spec requirement).
-            await BiometricSDK.purgeSyncedRecords();
-          }
-
-          Alert.alert(
-            failed > 0 ? 'Synced with errors' : 'Synced',
-            `${ok}/${ids.length} record(s) uploaded & purged locally` +
-              (failed > 0 ? `, ${failed} failed (will retry).` : '.')
-          );
-        } else {
-          // No endpoint configured — mark synced + purge locally so the offline /
-          // sync flow can be demoed without AWS. Set SYNC_ENDPOINT in config.ts
-          // after running deploy-backend.
-          await BiometricSDK.markSynced(ids);
-          await BiometricSDK.purgeSyncedRecords();
-          Alert.alert(
-            'Synced (local only)',
-            `${ids.length} record(s) marked synced & purged. ` +
-              'Set SYNC_ENDPOINT in src/config.ts to upload to AWS.'
-          );
+        const response = await fetch(endpoint.trim(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token.trim()}`,
+          },
+          body: JSON.stringify({ records: toSync }),
+        });
+        if (!response.ok) {
+          throw new Error(`Server returned ${response.status}.`);
         }
-
+        const body = await response.json();
+        const results: ServerResult[] = Array.isArray(body?.results)
+          ? body.results
+          : [];
+        // Only records the server confirmed are marked synced and purged.
+        // Anything else stays pending and is retried next time.
+        const accepted = results
+          .filter((r) => r.status === 'stored' || r.status === 'duplicate')
+          .map((r) => r.id);
+        if (accepted.length > 0) {
+          await BiometricSDK.markSynced(accepted);
+          await BiometricSDK.purgeSyncedRecords();
+        }
+        const failed = toSync.length - accepted.length;
+        Alert.alert(
+          failed > 0 ? 'Synced with errors' : 'Synced',
+          `${accepted.length} of ${toSync.length} record(s) uploaded and removed from the device.` +
+            (failed > 0 ? ` ${failed} will be retried.` : '')
+        );
         await refresh();
       } catch (e: any) {
-        Alert.alert('Sync failed', e?.message ?? 'Unknown error');
+        Alert.alert('Sync failed', e?.message ?? 'Unknown error.');
       } finally {
         setSyncing(false);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [refresh, syncing]
+    [configured, endpoint, token, refresh]
   );
 
-  const syncNow = useCallback(
-    () => syncRecords(records),
-    [records, syncRecords]
-  );
+  const syncRef = useRef(syncRecords);
+  syncRef.current = syncRecords;
+
+  // Auto-sync once per offline -> online transition, if sync is configured.
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const online =
+        state.isConnected === true && state.isInternetReachable !== false;
+      if (!online) {
+        wasOfflineRef.current = true;
+        return;
+      }
+      if (!wasOfflineRef.current) return;
+      wasOfflineRef.current = false;
+      if (!latest.current.configured || latest.current.syncing) return;
+      BiometricSDK.getPendingRecords()
+        .then((pending) => {
+          setRecords(pending);
+          return syncRef.current(pending);
+        })
+        .catch(() => {});
+    });
+    return unsubscribe;
+  }, []);
+
+  const inputStyle = [
+    styles.input,
+    {
+      backgroundColor: colors.cardBg,
+      borderColor: colors.border,
+      color: colors.text,
+    },
+  ];
 
   return (
     <ScrollView
       style={[s.screen, { backgroundColor: colors.bg }]}
       contentContainerStyle={{ paddingBottom: 30 }}
     >
-      <Text style={[s.title, { color: colors.text }]}>Sync Status</Text>
+      <Text style={[s.title, { color: colors.text }]}>Sync</Text>
       <Text style={[s.subtitle, { color: colors.textDim }]}>
-        Offline attendance queued for upload
+        Optional upload to your own backend
       </Text>
+
+      <TextInput
+        value={endpoint}
+        onChangeText={setEndpoint}
+        placeholder="https://<api-id>.execute-api.<region>.amazonaws.com/sync"
+        placeholderTextColor={colors.textDim}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        style={inputStyle}
+      />
+      <TextInput
+        value={token}
+        onChangeText={setToken}
+        placeholder="Access token"
+        placeholderTextColor={colors.textDim}
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry
+        style={inputStyle}
+      />
 
       <View
         style={[
@@ -171,24 +184,14 @@ export default function SyncScreen({ navigate }: Props) {
           </View>
         </View>
         <Text style={[s.cardBody, { color: colors.textDim }]}>
-          Records are HMAC-SHA256 signed and stored locally while offline.
-          Auto-sync fires when connectivity returns; tap below to sync now.
+          Records are signed and kept in the encrypted local database until a
+          sync succeeds. With sync not configured, they simply stay on the
+          device.
         </Text>
       </View>
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
-      ) : records.length === 0 ? (
-        <View
-          style={[
-            s.card,
-            { backgroundColor: colors.cardBg, borderColor: colors.border },
-          ]}
-        >
-          <Text style={[s.cardBody, { color: colors.textDim }]}>
-            No pending records. ✅
-          </Text>
-        </View>
       ) : (
         records.map((r) => (
           <View
@@ -207,8 +210,10 @@ export default function SyncScreen({ navigate }: Props) {
               </Text>
             </View>
             <Text style={[s.cardBody, { color: colors.textDim }]}>
-              {r.latitude.toFixed(4)}, {r.longitude.toFixed(4)} · conf{' '}
-              {(r.confidence * 100).toFixed(0)}%
+              {r.latitude != null && r.longitude != null
+                ? `${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}`
+                : 'No location'}
+              {`, similarity ${r.confidence.toFixed(2)}`}
             </Text>
           </View>
         ))
@@ -218,13 +223,17 @@ export default function SyncScreen({ navigate }: Props) {
         style={[
           s.button,
           { backgroundColor: colors.primary },
-          records.length === 0 && { opacity: 0.4 },
+          (!configured || records.length === 0) && { opacity: 0.4 },
         ]}
-        disabled={records.length === 0 || syncing}
-        onPress={syncNow}
+        disabled={!configured || records.length === 0 || syncing}
+        onPress={() => syncRecords(records)}
       >
         <Text style={s.buttonText}>
-          {syncing ? 'Uploading…' : `Sync ${records.length} record(s)`}
+          {syncing
+            ? 'Uploading...'
+            : configured
+              ? `Sync ${records.length} record(s)`
+              : 'Enter endpoint and token to sync'}
         </Text>
       </TouchableOpacity>
 
@@ -239,10 +248,19 @@ export default function SyncScreen({ navigate }: Props) {
         style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
         onPress={() => navigate('menu')}
       >
-        <Text style={[s.buttonText, { color: colors.text }]}>
-          ← Back to menu
-        </Text>
+        <Text style={[s.buttonText, { color: colors.text }]}>Back to menu</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  input: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    marginBottom: 12,
+  },
+});

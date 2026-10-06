@@ -1,7 +1,11 @@
-﻿Place these TFLite model files here:
-- blazeface.tflite (~1MB)
-- mobilefacenet_int8.tflite (~650KB)
-- face_mesh.tflite (~3MB)
+Model files for the Android library live here but are not committed to git.
 
-These files are not committed to git (too large).
-Download instructions: see ml_prep/download_models.py
+Download and verify them with:
+
+    yarn setup:models
+
+Expected files:
+- blazeface.tflite      (face detection, about 0.22 MB)
+- mobilefacenet.tflite  (face embedding, about 5 MB)
+
+Sources, licenses and SHA-256 hashes: docs/MODELS.md

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import { useEffect, useState } from 'react';
 import {
   Text,
@@ -16,14 +17,10 @@ type Props = {
   lastVerify: VerifyResult | null;
 };
 
-// Actual bundled sizes (verified from android/src/main/assets/models/*.tflite).
-// Liveness runs from MLKit eye-open probability in JS, so the face_mesh model
-// is no longer loaded by the native pipeline — its line is kept for the spec
-// pitch ("3-model architecture") but marked as not loaded.
+// Sizes of the files written by `yarn setup:models` (see docs on models).
 const MODELS = [
-  { name: 'BlazeFace (detect)', size: '0.22 MB' },
-  { name: 'MobileFaceNet (embed)', size: '5.00 MB' },
-  { name: 'Face Mesh (unused)', size: '— (JS liveness)' },
+  { name: 'BlazeFace short-range (face box)', size: '0.22 MB' },
+  { name: 'MobileFaceNet, float32, 192-d', size: '5.00 MB' },
 ];
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -68,7 +65,7 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
         ]}
       >
         <Text style={[s.cardTitle, { color: colors.text }]}>
-          Models (target &lt; 20 MB)
+          Bundled models
         </Text>
         {MODELS.map((m) => (
           <Stat key={m.name} label={m.name} value={m.size} />
@@ -97,16 +94,16 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
             <Stat label="Status" value={lastVerify.status} />
             <Stat
               label="Inference"
-              value={`${lastVerify.inferenceMs ?? '–'} ms`}
+              value={`${lastVerify.inferenceMs ?? '-'} ms`}
             />
             <Stat
               label="Total pipeline"
-              value={`${lastVerify.totalMs ?? '–'} ms`}
+              value={`${lastVerify.totalMs ?? '-'} ms`}
             />
             <Stat
               label="Quality"
               value={
-                lastVerify.quality != null ? lastVerify.quality.toFixed(2) : '–'
+                lastVerify.quality != null ? lastVerify.quality.toFixed(2) : '-'
               }
             />
           </>
@@ -133,9 +130,7 @@ export default function BenchmarkScreen({ navigate, lastVerify }: Props) {
         style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
         onPress={() => navigate('menu')}
       >
-        <Text style={[s.buttonText, { color: colors.text }]}>
-          ← Back to menu
-        </Text>
+        <Text style={[s.buttonText, { color: colors.text }]}>Back to menu</Text>
       </TouchableOpacity>
     </ScrollView>
   );

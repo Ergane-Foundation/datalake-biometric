@@ -1,374 +1,337 @@
-﻿package com.datalakebiometric
+// SPDX-License-Identifier: Apache-2.0
+package com.datalakebiometric
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.util.Base64
+import androidx.exifinterface.media.ExifInterface
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
-import com.facebook.react.bridge.WritableMap
-import com.facebook.react.bridge.WritableNativeMap
 import com.facebook.react.bridge.WritableNativeArray
-import kotlin.math.sqrt
+import com.facebook.react.bridge.WritableNativeMap
+import java.io.ByteArrayInputStream
+import java.io.Closeable
+import java.security.SecureRandom
 
+/**
+ * React Native entry point. Every method decodes its input, runs the on-device
+ * pipeline and settles the promise; nothing is sent over the network and no
+ * image is written to disk or to the log.
+ *
+ * Calls run on React Native's native-modules thread. A lock still guards the
+ * engines because [invalidate] can run on another thread during reload.
+ */
 class DatalakeBiometricModule(reactContext: ReactApplicationContext) :
   NativeDatalakeBiometricSpec(reactContext) {
 
-  private var tfliteEngine: TFLiteEngine? = null
-  private var livenessEngine: LivenessEngine? = null
-  private var embeddingStore: EmbeddingStore? = null
-
-  init {
-    try {
-      tfliteEngine = TFLiteEngine(reactContext.assets)
-      livenessEngine = LivenessEngine()
-      embeddingStore = EmbeddingStore(reactContext)
-    } catch (e: Exception) {
-      e.printStackTrace()
+  private class Engines(
+    val embedder: TFLiteEngine,
+    val detector: BlazeFaceDetector,
+    val store: EmbeddingStore
+  ) {
+    fun close() {
+      embedder.close()
+      detector.close()
+      store.close()
     }
   }
 
-  @ReactMethod
-  override fun initialize(promise: Promise) {
-    try {
-      // Engines are initialized in the constructor; this just forces the
-      // SQLCipher DB to open (and triggers Keystore key derivation) so the
-      // first enrolment doesn't pay that cost.
-      embeddingStore?.ensureOpen()
-      promise.resolve(true)
-    } catch (e: Exception) {
-      promise.reject("INIT_ERROR", e.message, e)
+  private val lock = Any()
+  private var engines: Engines? = null
+  private var matchThreshold = DEFAULT_MATCH_THRESHOLD
+  private var minQuality = DEFAULT_MIN_QUALITY
+  private val secureRandom = SecureRandom()
+
+  /** Creates the engines on first use. Errors propagate to the caller's promise. */
+  private fun engines(): Engines = synchronized(lock) {
+    engines ?: run {
+      val context = reactApplicationContext
+      // If a later step fails, close what was already created.
+      val created = mutableListOf<Closeable>()
+      try {
+        val embedder = TFLiteEngine(context.assets).also { created.add(it) }
+        val detector = BlazeFaceDetector(context.assets).also { created.add(it) }
+        val store = EmbeddingStore.create(context).also { created.add(it) }
+        Engines(embedder, detector, store).also { engines = it }
+      } catch (e: Exception) {
+        created.forEach { runCatching { it.close() } }
+        throw e
+      }
     }
   }
 
-  @ReactMethod
+  override fun invalidate() {
+    synchronized(lock) {
+      engines?.close()
+      engines = null
+    }
+    super.invalidate()
+  }
+
+  override fun initialize(options: ReadableMap?, promise: Promise) = settle(promise) {
+    options?.let {
+      if (it.hasKey("matchThreshold") && !it.isNull("matchThreshold")) {
+        matchThreshold = unitInterval(it.getDouble("matchThreshold"), "matchThreshold")
+      }
+      if (it.hasKey("minQuality") && !it.isNull("minQuality")) {
+        minQuality = unitInterval(it.getDouble("minQuality"), "minQuality")
+      }
+    }
+    engines().store.ensureOpen()
+    true
+  }
+
   override fun enrollWorker(
     workerId: String,
     base64Frames: ReadableArray,
     hint: ReadableMap?,
     promise: Promise
-  ) {
-    try {
-      val faceHint = readFaceHint(hint)
-      var successCount = 0
-      val embeddings = mutableListOf<FloatArray>()
-
-      for (i in 0 until base64Frames.size()) {
-        val base64 = base64Frames.getString(i) ?: continue
-        val raw = decodeBase64ToBitmap(base64) ?: continue
-        // Cap working resolution so scoreQuality / detect / embed don't try to
-        // chew through 12 MP per frame. 720 long-side keeps the face at ~300 px.
-        val working = downscaleForProcessing(raw)
-        // MLKit hint (if JS provided one) gives a tight face box; otherwise we
-        // fall back to the center-biased heuristic inside detectAndCrop.
-        val faceCrop = tfliteEngine?.detectAndCrop(working, faceHint)
-        working.recycle()
-        if (faceCrop != null) {
-          val embedding = tfliteEngine?.embed(faceCrop)
-          faceCrop.recycle()
-          if (embedding != null) {
-            embeddings.add(embedding)
-            successCount++
-          }
-        }
+  ) = settle(promise) {
+    requireValidId(workerId)
+    val e = engines()
+    val box = readFaceBox(hint)
+    val embeddings = mutableListOf<FloatArray>()
+    for (i in 0 until base64Frames.size()) {
+      val frame = decodeFrame(base64Frames.getString(i) ?: continue) ?: continue
+      // Frames with no face, or with several faces and no box, are skipped.
+      val face = if (box != null) e.detector.detectNear(frame, box) else e.detector.detect(frame).singleOrNull()
+      val aligned = face?.let { e.embedder.alignFace(frame, it) }
+      frame.recycle()
+      if (aligned != null) {
+        embeddings.add(e.embedder.embed(aligned))
+        aligned.recycle()
       }
+    }
+    if (embeddings.isEmpty()) {
+      throw BiometricException("NO_FACE", "No single face was found in any of the frames.")
+    }
+    e.store.saveTemplate(workerId, EmbeddingMath.averageTemplate(embeddings))
+    WritableNativeMap().apply {
+      putBoolean("success", true)
+      putInt("framesUsed", embeddings.size)
+    }
+  }
 
-      if (successCount > 0) {
-        val avgEmbedding = averageEmbeddings(embeddings)
-        embeddingStore?.save(workerId, avgEmbedding)
+  override fun verifyWorker(base64Image: String, hint: ReadableMap?, promise: Promise) = settle(promise) {
+    val start = System.nanoTime()
+    val e = engines()
+    val result = WritableNativeMap()
+    fun finish(status: String): WritableNativeMap {
+      result.putString("status", status)
+      result.putInt("totalMs", ((System.nanoTime() - start) / 1_000_000).toInt())
+      return result
+    }
 
-        val result = WritableNativeMap().apply {
-          putBoolean("success", true)
-          putInt("framesUsed", successCount)
-        }
-        promise.resolve(result)
+    val frame = decodeFrame(base64Image) ?: return@settle finish("NO_FACE")
+    try {
+      val quality = e.embedder.scoreQuality(frame)
+      result.putDouble("quality", quality.toDouble())
+      if (quality < minQuality) return@settle finish("POOR_QUALITY")
+
+      // BlazeFace always runs, because its keypoints are needed for alignment.
+      // An app-provided box only says which face to use.
+      val box = readFaceBox(hint)
+      val face = if (box != null) {
+        e.detector.detectNear(frame, box)
       } else {
-        promise.reject("ENROLL_FAILED", "No face detected in any of the captured frames")
+        val faces = e.detector.detect(frame)
+        if (faces.size > 1) return@settle finish("MULTIPLE_FACES")
+        faces.firstOrNull()
+      } ?: return@settle finish("NO_FACE")
+      val aligned = e.embedder.alignFace(frame, face) ?: return@settle finish("NO_FACE")
+      val embedding = try {
+        e.embedder.embed(aligned)
+      } finally {
+        aligned.recycle()
       }
-    } catch (e: Exception) {
-      promise.reject("ENROLL_ERROR", e.message, e)
+      result.putInt("inferenceMs", e.embedder.lastInferenceMs.toInt())
+
+      val match = e.store.findBestMatch(embedding, matchThreshold.toFloat())
+        ?: return@settle finish("NO_MATCH")
+      result.putString("workerId", match.workerId)
+      result.putDouble("confidence", match.similarity.toDouble())
+      finish("MATCH")
+    } finally {
+      frame.recycle()
     }
   }
 
-  @ReactMethod
-  override fun verifyWorker(base64Image: String, hint: ReadableMap?, promise: Promise) {
-    val startMs = System.currentTimeMillis()
-    try {
-      val raw = decodeBase64ToBitmap(base64Image)
-      if (raw == null) {
-        val result = WritableNativeMap().apply {
-          putString("status", "NO_FACE")
-          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
-        }
-        promise.resolve(result)
-        return
+  override fun checkLiveness(landmarks: ReadableArray, promise: Promise) = settle(promise) {
+    val points = Array(landmarks.size()) { i ->
+      val p = landmarks.getArray(i)
+      if (p == null || p.size() < 2) {
+        FloatArray(3)
+      } else {
+        floatArrayOf(p.getDouble(0).toFloat(), p.getDouble(1).toFloat(), if (p.size() > 2) p.getDouble(2).toFloat() else 0f)
       }
-      // Cap the working bitmap before any per-pixel work runs.
-      val working = downscaleForProcessing(raw)
-
-      // Quick blur/exposure gate (runs on the downscaled frame)
-      val quality = tfliteEngine?.scoreQuality(working) ?: 0f
-      if (quality < 0.5f) {
-        working.recycle()
-        val result = WritableNativeMap().apply {
-          putString("status", "POOR_QUALITY")
-          putDouble("quality", quality.toDouble())
-          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
-        }
-        promise.resolve(result)
-        return
-      }
-
-      // Tight face crop — MLKit hint preferred, center-heuristic as fallback.
-      val faceHint = readFaceHint(hint)
-      val faceCrop = tfliteEngine?.detectAndCrop(working, faceHint)
-      working.recycle()
-      if (faceCrop == null) {
-        val result = WritableNativeMap().apply {
-          putString("status", "NO_FACE")
-          putDouble("quality", quality.toDouble())
-          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
-        }
-        promise.resolve(result)
-        return
-      }
-
-      val embedding = tfliteEngine?.embed(faceCrop)
-      faceCrop.recycle()
-      if (embedding == null) {
-        val result = WritableNativeMap().apply {
-          putString("status", "NO_FACE")
-          putDouble("quality", quality.toDouble())
-          putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
-        }
-        promise.resolve(result)
-        return
-      }
-
-      val match = embeddingStore?.findMatch(embedding, 0.65f)
-
-      val result = WritableNativeMap().apply {
-        if (match != null) {
-          putString("status", "MATCH")
-          putString("workerId", match.workerId)
-          putDouble("confidence", match.similarity.toDouble())
-        } else {
-          putString("status", "NO_MATCH")
-        }
-        putInt("inferenceMs", tfliteEngine?.lastInferenceMs?.toInt() ?: 0)
-        putInt("totalMs", (System.currentTimeMillis() - startMs).toInt())
-        putDouble("quality", quality.toDouble())
-      }
-      promise.resolve(result)
-    } catch (e: Exception) {
-      promise.reject("VERIFY_ERROR", e.message, e)
+    }
+    val r = synchronized(lock) { landmarkLiveness.evaluate(points) }
+    WritableNativeMap().apply {
+      putBoolean("isLive", r.isLive)
+      putBoolean("isBlink", r.isBlink)
+      putInt("blinkCount", r.blinkCount)
+      putDouble("earValue", r.averageEar.toDouble())
     }
   }
 
-  @ReactMethod
-  override fun checkLiveness(landmarks: ReadableArray, promise: Promise) {
-    try {
-      val landmarksArray = Array(landmarks.size()) { FloatArray(3) }
-      for (i in 0 until landmarks.size()) {
-        val point = landmarks.getArray(i)
-        if (point != null) {
-          landmarksArray[i][0] = point.getDouble(0).toFloat()
-          landmarksArray[i][1] = point.getDouble(1).toFloat()
-          landmarksArray[i][2] = point.getDouble(2).toFloat()
-        }
-      }
-
-      val result = livenessEngine?.evaluate(landmarksArray)
-
-      val response = WritableNativeMap().apply {
-        putBoolean("isLive", result?.get(0) == true)
-        putBoolean("isBlink", result?.get(1) == true)
-        putInt("blinkCount", (result?.get(2) as? Number)?.toInt() ?: 0)
-        putDouble("earValue", (result?.get(3) as? Number)?.toDouble() ?: 0.0)
-      }
-      promise.resolve(response)
-    } catch (e: Exception) {
-      promise.reject("LIVENESS_ERROR", e.message, e)
-    }
-  }
-
-  @ReactMethod
   override fun logAndQueueAttendance(
     workerId: String,
-    latitude: Double,
-    longitude: Double,
     confidence: Double,
+    location: ReadableMap?,
     promise: Promise
-  ) {
-    try {
-      embeddingStore?.queueAttendanceRecord(
-        workerId,
-        latitude,
-        longitude,
-        confidence.toFloat()
-      )
-      promise.resolve(true)
-    } catch (e: Exception) {
-      promise.reject("LOG_ERROR", e.message, e)
-    }
-  }
-
-  @ReactMethod
-  override fun getPendingAttendanceRecords(promise: Promise) {
-    try {
-      val result = embeddingStore?.getPendingRecords() ?: WritableNativeArray()
-      promise.resolve(result)
-    } catch (e: Exception) {
-      promise.reject("GET_RECORDS_ERROR", e.message, e)
-    }
-  }
-
-  @ReactMethod
-  override fun markRecordsSynced(recordIds: ReadableArray, promise: Promise) {
-    try {
-      val ids = mutableListOf<String>()
-      for (i in 0 until recordIds.size()) {
-        val id = recordIds.getString(i)
-        if (id != null) ids.add(id)
+  ) = settle(promise) {
+    requireValidId(workerId)
+    var latitude: Double? = null
+    var longitude: Double? = null
+    if (location != null) {
+      latitude = location.getDouble("latitude")
+      longitude = location.getDouble("longitude")
+      if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+        throw BiometricException("INVALID_ARGUMENT", "Location is out of range.")
       }
-      embeddingStore?.markSynced(ids)
-      promise.resolve(true)
-    } catch (e: Exception) {
-      promise.reject("MARK_SYNCED_ERROR", e.message, e)
     }
+    engines().store.queueAttendance(workerId, confidence, latitude, longitude)
+    true
   }
 
-  @ReactMethod
-  override fun purgeSyncedRecords(promise: Promise) {
+  override fun getPendingAttendanceRecords(promise: Promise) = settle(promise) {
+    engines().store.pendingRecords()
+  }
+
+  override fun markRecordsSynced(recordIds: ReadableArray, promise: Promise) = settle(promise) {
+    val ids = (0 until recordIds.size()).mapNotNull { recordIds.getString(it) }
+    engines().store.markSynced(ids)
+    true
+  }
+
+  override fun purgeSyncedRecords(promise: Promise) = settle(promise) {
+    engines().store.purgeSynced()
+    true
+  }
+
+  override fun getSecureRandomBytes(count: Double, promise: Promise) = settle(promise) {
+    val n = count.toInt()
+    if (n < 1 || n > MAX_RANDOM_BYTES) {
+      throw BiometricException("INVALID_ARGUMENT", "count must be from 1 to $MAX_RANDOM_BYTES.")
+    }
+    val bytes = ByteArray(n).also { secureRandom.nextBytes(it) }
+    WritableNativeArray().apply { bytes.forEach { pushInt(it.toInt() and 0xFF) } }
+  }
+
+  // --- Helpers ---------------------------------------------------------------
+
+  private val landmarkLiveness = LivenessEngine()
+
+  /** Resolves with the block's value, or rejects with a stable error code. */
+  private inline fun settle(promise: Promise, block: () -> Any) {
     try {
-      embeddingStore?.purgeSynced()
-      promise.resolve(true)
+      promise.resolve(block())
+    } catch (e: BiometricException) {
+      promise.reject(e.code, e.message, e)
+    } catch (e: OutOfMemoryError) {
+      promise.reject("OUT_OF_MEMORY", "Not enough memory to process the image.", e)
     } catch (e: Exception) {
-      promise.reject("PURGE_ERROR", e.message, e)
+      promise.reject("NATIVE_ERROR", e.message ?: e.javaClass.simpleName, e)
     }
   }
 
-  // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  private fun decodeBase64ToBitmap(base64: String): Bitmap? {
-    return try {
-      val bytes = Base64.decode(base64, Base64.DEFAULT)
-      val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-      val rawW = raw.width
-      val rawH = raw.height
-
-      // Vision Camera writes JPEGs with an EXIF orientation tag instead of
-      // pre-rotating pixels. Front-camera selfies on most Android phones come
-      // back with orientation 5 or 7 (rotate + mirror), so a simple ROTATE_90
-      // case isn't enough — we apply the full 8-value EXIF transform matrix.
-      val exif = androidx.exifinterface.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
-      val orientation = exif.getAttributeInt(
-        androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL
-      )
-      val matrix = android.graphics.Matrix()
-      when (orientation) {
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL ->
-          matrix.setScale(-1f, 1f)
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 ->
-          matrix.setRotate(180f)
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
-          matrix.setRotate(180f); matrix.postScale(-1f, 1f)
-        }
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_TRANSPOSE -> {
-          matrix.setRotate(90f); matrix.postScale(-1f, 1f)
-        }
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 ->
-          matrix.setRotate(90f)
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_TRANSVERSE -> {
-          matrix.setRotate(-90f); matrix.postScale(-1f, 1f)
-        }
-        androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 ->
-          matrix.setRotate(-90f)
-      }
-      val upright = if (matrix.isIdentity) {
-        raw
-      } else {
-        val rotated = android.graphics.Bitmap.createBitmap(
-          raw, 0, 0, rawW, rawH, matrix, true
-        )
-        if (rotated !== raw) raw.recycle()
-        rotated
-      }
-      android.util.Log.d(
-        "DatalakeBM",
-        "decodeBase64ToBitmap raw=${rawW}x${rawH} exif=$orientation -> upright=${upright.width}x${upright.height}"
-      )
-      upright
-    } catch (e: Exception) {
-      android.util.Log.e("DatalakeBM", "decodeBase64ToBitmap failed: ${e.message}")
-      null
+  private fun unitInterval(value: Double, name: String): Double {
+    if (value.isNaN() || value < 0.0 || value > 1.0) {
+      throw BiometricException("INVALID_ARGUMENT", "$name must be from 0 to 1.")
     }
+    return value
   }
 
   /**
-   * Caps a freshly decoded camera bitmap at `maxSide` px on the longer edge. The
-   * native pipeline (scoreQuality, BlazeFace, MobileFaceNet) never needs more
-   * than this — running quality scoring on a 12 MP raw bitmap previously caused
-   * OutOfMemoryError. Bitmap.createScaledBitmap is a Skia native call, fast.
+   * IDs are stored and signed as given. `|` is rejected because it separates
+   * fields in the signed payload; control characters are rejected so IDs stay
+   * printable in exports.
    */
-  private fun downscaleForProcessing(bitmap: Bitmap, maxSide: Int = 720): Bitmap {
-    val w = bitmap.width
-    val h = bitmap.height
-    val longest = maxOf(w, h)
-    if (longest <= maxSide) return bitmap
-    val scale = maxSide.toFloat() / longest
-    val nw = (w * scale).toInt().coerceAtLeast(1)
-    val nh = (h * scale).toInt().coerceAtLeast(1)
-    val scaled = Bitmap.createScaledBitmap(bitmap, nw, nh, true)
-    if (scaled !== bitmap) bitmap.recycle()
-    android.util.Log.d("DatalakeBM", "downscaleForProcessing ${w}x${h} -> ${nw}x${nh}")
-    return scaled
+  private fun requireValidId(id: String) {
+    if (id.isBlank() || id.length > 128 || id.any { it == '|' || it.isISOControl() }) {
+      throw BiometricException(
+        "INVALID_ARGUMENT",
+        "workerId must be 1 to 128 printable characters and must not contain '|'."
+      )
+    }
   }
 
-  /**
-   * Pulls a normalized face box (0..1 coords) out of the JS hint map, if any.
-   * Returning null falls back to the center-biased crop heuristic.
-   */
-  private fun readFaceHint(hint: ReadableMap?): TFLiteEngine.FaceHint? {
+  private fun readFaceBox(hint: ReadableMap?): FaceBox? {
     if (hint == null) return null
-    return try {
-      TFLiteEngine.FaceHint(
-        nx = hint.getDouble("nx").toFloat(),
-        ny = hint.getDouble("ny").toFloat(),
-        nw = hint.getDouble("nw").toFloat(),
-        nh = hint.getDouble("nh").toFloat()
-      )
-    } catch (e: Exception) {
-      android.util.Log.w("DatalakeBM", "readFaceHint failed: ${e.message}")
-      null
-    }
+    val keys = listOf("nx", "ny", "nw", "nh")
+    if (keys.any { !hint.hasKey(it) || hint.isNull(it) }) return null
+    return FaceBox(
+      hint.getDouble("nx").toFloat(),
+      hint.getDouble("ny").toFloat(),
+      hint.getDouble("nw").toFloat(),
+      hint.getDouble("nh").toFloat()
+    )
   }
 
-  private fun averageEmbeddings(embeddings: List<FloatArray>): FloatArray {
-    if (embeddings.isEmpty()) return FloatArray(512)
-    val avg = FloatArray(embeddings[0].size)
-    for (embedding in embeddings) {
-      for (i in embedding.indices) {
-        avg[i] += embedding[i]
+  /**
+   * Decodes a base64 JPEG in memory and applies its EXIF orientation. Camera
+   * libraries often store rotation as EXIF instead of rotating the pixels, and
+   * front cameras use the mirrored variants, so all eight cases are handled.
+   * The result is downscaled to at most [MAX_SIDE] px, which is plenty for a
+   * face crop and avoids running out of memory on 12+ MP photos.
+   */
+  private fun decodeFrame(base64: String): Bitmap? {
+    val bytes = try {
+      Base64.decode(base64, Base64.DEFAULT)
+    } catch (e: IllegalArgumentException) {
+      return null
+    }
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    // Power-of-two subsampling while decoding keeps peak memory low.
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_SIDE) sample *= 2
+    val decoded = BitmapFactory.decodeByteArray(
+      bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }
+    ) ?: return null
+
+    val orientation = ExifInterface(ByteArrayInputStream(bytes))
+      .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    val matrix = Matrix()
+    when (orientation) {
+      ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+      ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+      ExifInterface.ORIENTATION_FLIP_VERTICAL -> {
+        matrix.setRotate(180f)
+        matrix.postScale(-1f, 1f)
       }
+      ExifInterface.ORIENTATION_TRANSPOSE -> {
+        matrix.setRotate(90f)
+        matrix.postScale(-1f, 1f)
+      }
+      ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+      ExifInterface.ORIENTATION_TRANSVERSE -> {
+        matrix.setRotate(-90f)
+        matrix.postScale(-1f, 1f)
+      }
+      ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
     }
-    for (i in avg.indices) {
-      avg[i] /= embeddings.size
+    val longest = maxOf(decoded.width, decoded.height)
+    if (longest > MAX_SIDE) {
+      val s = MAX_SIDE.toFloat() / longest
+      matrix.postScale(s, s)
     }
-    // L2 normalize
-    var norm = 0f
-    for (v in avg) norm += v * v
-    norm = sqrt(norm)
-    if (norm > 0) {
-      for (i in avg.indices) avg[i] /= norm
-    }
-    return avg
+    if (matrix.isIdentity) return decoded
+    val upright = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+    if (upright !== decoded) decoded.recycle()
+    return upright
   }
 
   companion object {
     const val NAME = NativeDatalakeBiometricSpec.NAME
+    // Calibrated on LFW for a false accept rate of 1e-4 per comparison; see docs/BENCHMARKS.md.
+    const val DEFAULT_MATCH_THRESHOLD = 0.54
+    const val DEFAULT_MIN_QUALITY = 0.5
+    private const val MAX_SIDE = 720
+    private const val MAX_RANDOM_BYTES = 1024
   }
 }

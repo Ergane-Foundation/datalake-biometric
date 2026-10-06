@@ -1,78 +1,124 @@
+// SPDX-License-Identifier: Apache-2.0
 package com.datalakebiometric
 
 import android.content.Context
-import android.content.SharedPreferences
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import java.io.File
+import java.security.GeneralSecurityException
+import java.security.KeyStore
 import java.security.SecureRandom
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Android-Keystore-backed secret vault.
+ * Holds the two long-lived secrets of the SDK: the database passphrase and the
+ * record-signing (HMAC) key. Both are random 32-byte values.
  *
- * Holds two long-lived secrets used by the biometric SDK:
+ * Each secret is encrypted with an AES-256-GCM key that lives in the Android
+ * Keystore and cannot be exported, then stored in private SharedPreferences.
+ * So the app's data directory alone is not enough to decrypt the database: an
+ * attacker also needs this device's Keystore.
  *
- *   - **dbPassphrase()** — random 32-byte passphrase used to open the
- *     SQLCipher-encrypted embedding/attendance database. Stored encrypted by
- *     `EncryptedSharedPreferences`, whose master key lives in the
- *     hardware-backed Android Keystore (alias "biometric_db_key", AES-256-GCM).
- *     The raw passphrase never appears on disk in clear text.
- *
- *   - **hmacKey()** — random 32-byte key used to HMAC-SHA256 each attendance
- *     record. Same storage path as the DB passphrase. Replaces the earlier
- *     deviceId-derived key (which was not a secret).
- *
- * Both secrets are generated lazily on first use and persist across app launches.
- * Wiping app data (or uninstalling) destroys them — and with them, the ability
- * to read the encrypted DB or verify signatures, which is the desired behavior.
+ * Uninstalling the app or clearing its data destroys the secrets, and with them
+ * the stored templates. If app data is restored from a backup onto another
+ * device, the secrets cannot be decrypted; apps should exclude the SDK's files
+ * from backup (see docs/PRIVACY.md).
  */
 internal object KeyVault {
-    private const val PREFS_NAME = "datalake_biometric_vault"
-    private const val KEYSTORE_ALIAS = "biometric_db_key"
-    private const val KEY_DB_PASSPHRASE = "db_passphrase_b64"
-    private const val KEY_HMAC = "hmac_key_b64"
-    private const val SECRET_BYTES = 32
+  private const val KEYSTORE = "AndroidKeyStore"
+  private const val MASTER_ALIAS = "datalake_biometric_master_v2"
+  private const val PREFS = "datalake_biometric_keys_v2"
+  private const val GCM_TAG_BITS = 128
+  private const val SECRET_BYTES = 32
 
-    private val random = SecureRandom()
+  // Storage used by versions before 0.2.0 (androidx.security EncryptedSharedPreferences).
+  private const val LEGACY_PREFS = "datalake_biometric_vault"
+  private const val LEGACY_ALIAS = "biometric_db_key"
 
-    @Volatile private var cachedPrefs: SharedPreferences? = null
+  private val random = SecureRandom()
 
-    private fun prefs(context: Context): SharedPreferences {
-        cachedPrefs?.let { return it }
-        synchronized(this) {
-            cachedPrefs?.let { return it }
-            val masterKey = MasterKey.Builder(context.applicationContext, KEYSTORE_ALIAS)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            val sp = EncryptedSharedPreferences.create(
-                context.applicationContext,
-                PREFS_NAME,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
-            cachedPrefs = sp
-            return sp
-        }
+  fun dbPassphrase(context: Context): ByteArray = secret(context, "db_passphrase")
+
+  fun hmacKey(context: Context): ByteArray = secret(context, "hmac_key")
+
+  /**
+   * Removes data written by versions before 0.2.0, whose keys this version
+   * cannot read: the old key store, its Keystore entry and the database it
+   * protected. Enrolled people must be enrolled again. Returns true if
+   * anything was removed. Safe to call on every start.
+   */
+  fun resetLegacyInstall(context: Context, databaseName: String): Boolean {
+    val legacyPrefs = File(context.applicationInfo.dataDir, "shared_prefs/$LEGACY_PREFS.xml")
+    if (!legacyPrefs.exists()) return false
+    context.deleteDatabase(databaseName)
+    context.deleteSharedPreferences(LEGACY_PREFS)
+    runCatching { keyStore().deleteEntry(LEGACY_ALIAS) }
+    return true
+  }
+
+  @Synchronized
+  private fun secret(context: Context, name: String): ByteArray {
+    val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    prefs.getString(name, null)?.let { return unwrap(it) }
+
+    val fresh = ByteArray(SECRET_BYTES).also { random.nextBytes(it) }
+    // commit(), not apply(): the secret must be on disk before anything is
+    // encrypted with it, or a crash could leave data nobody can decrypt.
+    if (!prefs.edit().putString(name, wrap(fresh)).commit()) {
+      throw BiometricException("KEYSTORE_ERROR", "Could not store a new key.")
     }
+    return fresh
+  }
 
-    /** SQLCipher passphrase as a base64 string (URL-safe characters only). */
-    fun dbPassphrase(context: Context): String {
-        val sp = prefs(context)
-        sp.getString(KEY_DB_PASSPHRASE, null)?.let { return it }
-        val fresh = Base64.encodeToString(randomBytes(), Base64.NO_WRAP or Base64.URL_SAFE)
-        sp.edit().putString(KEY_DB_PASSPHRASE, fresh).apply()
-        return fresh
+  private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
+
+  private fun masterKey(): SecretKey {
+    (keyStore().getKey(MASTER_ALIAS, null) as? SecretKey)?.let { return it }
+    val spec = KeyGenParameterSpec.Builder(
+      MASTER_ALIAS,
+      KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+    )
+      .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+      .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+      .setKeySize(256)
+      .build()
+    return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
+      .apply { init(spec) }
+      .generateKey()
+  }
+
+  /** Encrypts with a fresh random IV chosen by the Keystore; stores "iv:ciphertext". */
+  private fun wrap(plain: ByteArray): String {
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, masterKey())
+    val encoded = { bytes: ByteArray -> Base64.encodeToString(bytes, Base64.NO_WRAP) }
+    return encoded(cipher.iv) + ":" + encoded(cipher.doFinal(plain))
+  }
+
+  private fun unwrap(stored: String): ByteArray {
+    val parts = stored.split(":")
+    if (parts.size != 2) {
+      throw BiometricException("KEYSTORE_ERROR", "Stored key data is corrupted.")
     }
-
-    /** Raw bytes of the HMAC-SHA256 signing key. */
-    fun hmacKey(context: Context): ByteArray {
-        val sp = prefs(context)
-        sp.getString(KEY_HMAC, null)?.let { return Base64.decode(it, Base64.NO_WRAP) }
-        val fresh = randomBytes()
-        sp.edit().putString(KEY_HMAC, Base64.encodeToString(fresh, Base64.NO_WRAP)).apply()
-        return fresh
+    try {
+      val iv = Base64.decode(parts[0], Base64.NO_WRAP)
+      val data = Base64.decode(parts[1], Base64.NO_WRAP)
+      val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+      cipher.init(Cipher.DECRYPT_MODE, masterKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+      return cipher.doFinal(data)
+    } catch (e: GeneralSecurityException) {
+      throw BiometricException(
+        "KEYSTORE_ERROR",
+        "Stored keys cannot be decrypted on this device, for example after restoring app " +
+          "data from a backup. Clear the app's data to start over.",
+        e
+      )
+    } catch (e: IllegalArgumentException) {
+      throw BiometricException("KEYSTORE_ERROR", "Stored key data is corrupted.", e)
     }
-
-    private fun randomBytes(): ByteArray = ByteArray(SECRET_BYTES).also { random.nextBytes(it) }
+  }
 }
