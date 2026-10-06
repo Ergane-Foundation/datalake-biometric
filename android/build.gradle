@@ -73,7 +73,7 @@ dependencies {
   // aligned, which Google Play requires for apps targeting Android 15+.
   // 1.x on purpose: 2.x needs Kotlin 2.3 in the host app and adds an unused
   // 3 MB GPU library. The classic Interpreter API is the same in both.
-  implementation "com.google.ai.edge.litert:litert:1.4.2"
+  implementation "com.google.ai.edge.litert:litert:2.2.0"
 
   // Encrypted SQLite (SQLCipher, AES-256), also 16 KB aligned.
   implementation "net.zetetic:sqlcipher-android:4.19.1@aar"
