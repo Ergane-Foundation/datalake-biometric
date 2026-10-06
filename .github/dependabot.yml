@@ -1,6 +1,13 @@
 # Weekly dependency updates. Per ecosystem, all minor and patch updates arrive as
 # one grouped pull request; major updates stay separate so each can be reviewed
-# on its own.
+# on its own. Short group names keep pull request titles within the 100
+# characters that the PR title check allows.
+#
+# Packages that must move together with a React Native upgrade are ignored here
+# (patch updates still come through): React Native 0.x minor releases are
+# breaking changes, and React, the React Native tooling and the Android build
+# tools are pinned to what each React Native release supports. Upgrade them all
+# at once, by hand (see the issue about upgrading React Native).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -10,9 +17,22 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies, js]
     groups:
-      npm-minor-and-patch:
+      npm:
         patterns: ['*']
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: react-native
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: '@react-native/*'
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: '@react-native-community/cli*'
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: react
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: react-test-renderer
+        update-types: [version-update:semver-minor, version-update:semver-major]
 
   - package-ecosystem: gradle
     directories:
@@ -23,10 +43,18 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies, android]
     groups:
-      gradle-minor-and-patch:
+      gradle:
         patterns: ['*']
         update-types: [minor, patch]
     ignore:
+      # The Gradle wrapper, Android Gradle Plugin and Kotlin version must match the
+      # React Native release (the React Native Gradle plugin is compiled with them).
+      - dependency-name: gradle-wrapper
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: com.android.tools.build:gradle
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: org.jetbrains.kotlin:*
+        update-types: [version-update:semver-minor, version-update:semver-major]
       # LiteRT 2.x requires Kotlin 2.3 in every app that uses the SDK; stay on 1.x
       # until that is acceptable (see android/build.gradle).
       - dependency-name: com.google.ai.edge.litert:litert
@@ -41,7 +69,7 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies, ci]
     groups:
-      actions-minor-and-patch:
+      actions:
         patterns: ['*']
         update-types: [minor, patch]
 
@@ -52,6 +80,6 @@ updates:
     open-pull-requests-limit: 5
     labels: [dependencies, backend]
     groups:
-      pip-minor-and-patch:
+      pip:
         patterns: ['*']
         update-types: [minor, patch]
