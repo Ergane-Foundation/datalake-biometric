@@ -1,0 +1,65 @@
+# Repository labels, colors and descriptions. Keep this list in sync with the
+# labels on GitHub (Issues > Labels).
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+- name: help wanted
+  color: 008672
+  description: Extra attention is needed
+- name: hacktoberfest
+  color: ff8ae2
+  description: Open for Hacktoberfest contributions
+- name: hacktoberfest-accepted
+  color: 2ea44f
+  description: Counts as an accepted Hacktoberfest contribution
+- name: invalid
+  color: e4e669
+  description: Not a valid issue or pull request
+- name: spam
+  color: b60205
+  description: Low-effort or spam contribution
+- name: bug
+  color: d73a4a
+  description: Something does not work as documented
+- name: enhancement
+  color: a2eeef
+  description: New feature or improvement
+- name: documentation
+  color: 0075ca
+  description: Documentation changes
+- name: dependencies
+  color: 0366d6
+  description: Dependency updates
+- name: android
+  color: 3ddc84
+  description: Android native code
+- name: ios
+  color: 999999
+  description: iOS native code
+- name: js
+  color: f1e05a
+  description: JavaScript and TypeScript
+- name: native
+  color: 5319e7
+  description: Native code on either platform
+- name: ml
+  color: fbca04
+  description: Models, accuracy, ml_prep
+- name: backend
+  color: c5def5
+  description: Optional sync backend
+- name: tests
+  color: bfdadc
+  description: Tests
+- name: ci
+  color: 1d76db
+  description: Continuous integration and tooling
+- name: 'difficulty: easy'
+  color: c2e0c6
+  description: A few hours, little context needed
+- name: 'difficulty: medium'
+  color: fef2c0
+  description: Needs some knowledge of the codebase
+- name: 'difficulty: hard'
+  color: f9d0c4
+  description: Larger change or deep platform knowledge

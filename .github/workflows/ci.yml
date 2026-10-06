@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 on:
   push:
     branches:
@@ -9,16 +9,20 @@ on:
   merge_group:
     types:
       - checks_requested
+  # Run by hand on any branch from the Actions tab (for example to check iOS).
+  workflow_dispatch:
+
+# The workflow only reads the repository. It uses no secrets, so pull requests
+# from forks run exactly the same checks.
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Opt all jobs into Node.js 24 for JavaScript actions. The pinned actions
-# (actions/cache, actions/setup-node) still ship a Node 20 entrypoint which
-# GitHub will retire on 2026-09-16; this env flag forces the runner to use
-# Node 24 even with the existing SHA pins. Drop once we bump the actions
-# themselves to v5+ tags.
+# Some pinned actions declare the retired Node 20 runtime; this forces Node 24.
+# Remove once every pinned action targets Node 24.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -33,11 +37,17 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      - name: Check file encoding
+        run: yarn lint:encoding
+
       - name: Lint files
         run: yarn lint
 
-      - name: Typecheck files
+      - name: Typecheck library
         run: yarn typecheck
+
+      - name: Typecheck example app
+        run: yarn example typecheck
 
   test:
     runs-on: ubuntu-latest
@@ -49,8 +59,11 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Run unit tests
+      - name: Run library tests
         run: yarn test --maxWorkers=2 --coverage
+
+      - name: Run example app tests
+        run: yarn example test --maxWorkers=2
 
   build-library:
     runs-on: ubuntu-latest
@@ -117,16 +130,7 @@ jobs:
 
       - name: Generate debug keystore
         if: env.turbo_cache_hit != 1
-        run: |
-          keytool -genkeypair -v \
-            -keystore example/android/app/debug.keystore \
-            -alias androiddebugkey \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass android \
-            -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US"
+        run: yarn setup:keystore
 
       - name: Cache Gradle
         if: env.turbo_cache_hit != 1
@@ -138,6 +142,11 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('example/android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
+
+      - name: Run Kotlin unit tests
+        if: env.turbo_cache_hit != 1
+        working-directory: example/android
+        run: ./gradlew :datalake-biometric:testDebugUnitTest --no-daemon --console=plain
 
       - name: Build example for Android
         env:
@@ -207,3 +216,30 @@ jobs:
       - name: Build example for Web
         run: |
           yarn example build:web
+
+  test-backend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements-dev.txt cfn-lint
+
+      - name: Run backend tests
+        run: python -m pytest -q
+
+      - name: Lint SAM template
+        run: cfn-lint template.yaml

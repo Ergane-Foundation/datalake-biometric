@@ -1,91 +1,66 @@
 name: Deploy backend
 
+# Manual only: Actions tab > "Deploy backend" > "Run workflow". It never runs on
+# push or pull_request, so contributors and forks cannot trigger a deployment.
 on:
-  push:
-    branches: [main]
-    # Auto-deploy only when backend code or the workflow itself changes,
-    # so app-only PRs don't burn AWS API calls.
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy-backend.yml'
-  # Manual trigger from the GitHub Actions UI — useful for re-deploying
-  # without code changes, or for the very first deploy after secrets land.
   workflow_dispatch:
 
-# Opt JavaScript actions into Node.js 24 (matches ci.yml).
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+permissions:
+  contents: read
+  id-token: write # lets GitHub issue a short-lived OIDC token for AWS
 
-# Don't pile up redundant deploys when commits land back-to-back.
 concurrency:
   group: deploy-backend
   cancel-in-progress: false
 
 jobs:
   deploy:
+    # Only the maintainer's repository deploys; in any fork this job is skipped.
+    if: github.repository == 'Ergane-Foundation/datalake-biometric'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
+      # OIDC: no AWS keys are stored in GitHub. Setup and the access-key
+      # alternative are described in backend/README.md.
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
       - name: Set up AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@89ddb14d60e682855e3fea4be85b3c56485de310 # v3
         with:
           use-installer: true
 
-      - name: SAM validate
-        working-directory: backend
+      - name: Validate template
         run: sam validate --lint
 
-      - name: SAM build
-        working-directory: backend
-        # No --use-container — the GitHub runner already has Python 3.11
-        # via setup-python above, and Docker-based builds are slower for
-        # a pure-Python Lambda anyway.
+      - name: Build
         run: sam build
 
-      - name: SAM deploy
-        working-directory: backend
+      - name: Deploy
         run: sam deploy --no-progressbar
 
-      - name: Print API URL
-        working-directory: backend
+      - name: Smoke test (a request without a token must be refused)
+        env:
+          STACK_NAME: datalake-biometric # must match stack_name in samconfig.toml
         run: |
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name datalake-biometric \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text)
-          echo "### Sync endpoint deployed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "$API_URL" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Copy this into \`example/src/config.ts\` (\`SYNC_ENDPOINT\`) and commit." >> $GITHUB_STEP_SUMMARY
-
-      - name: Smoke test (empty array)
-        working-directory: backend
-        run: |
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name datalake-biometric \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" \
-            --output text)
-          echo "POST $API_URL with an empty records array..."
-          curl -fsS -X POST "$API_URL" \
-            -H 'Content-Type: application/json' \
-            -d '{"records":[]}'
-          echo ""
+          URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" \
+            -H 'Content-Type: application/json' -d '{"records":[]}')
+          echo "Unauthenticated POST returned $STATUS"
+          test "$STATUS" = "401"
+          echo "### Sync endpoint" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"

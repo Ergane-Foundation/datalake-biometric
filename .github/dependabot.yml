@@ -1,0 +1,39 @@
+# Weekly dependency update pull requests, grouped to keep the number small.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, js]
+    groups:
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: gradle
+    directories:
+      - /android
+      - /example/android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels: [dependencies, android]
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup
+    schedule:
+      interval: weekly
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    labels: [dependencies, backend]
