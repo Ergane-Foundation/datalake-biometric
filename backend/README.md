@@ -1,8 +1,12 @@
 # Sync backend (optional, self-hosted)
 
 The SDK works fully offline and never needs this. Use it only if you want to
-collect attendance records from devices in one place. You deploy it into **your
-own** AWS account; this project does not run a shared server.
+collect attendance records from devices in one place.
+
+**There is no hosted backend.** This project does not run a server for anyone.
+Every user deploys their own stack into their own AWS account, or runs it locally.
+Running it fully locally, without an AWS account, is an open issue: "Run the sync
+backend fully locally, without an AWS account".
 
 ## What it creates
 
