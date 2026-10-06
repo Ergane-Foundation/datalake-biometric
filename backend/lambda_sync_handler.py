@@ -1,76 +1,91 @@
+# SPDX-License-Identifier: Apache-2.0
 """
-AWS Lambda handler for syncing biometric attendance records from the
-datalake-biometric React Native SDK.
+Sync endpoint for attendance records queued by the datalake-biometric SDK.
 
-Receives a JSON array of attendance records over HTTPS, writes each one
-idempotently to DynamoDB. The device-generated HMAC-SHA256 signature is
-preserved in the row for audit, but server-side verification is intentionally
-NOT performed in this reference backend — the signing key on the device
-lives in the Android Keystore and never leaves the device, so the Lambda has
-nothing to compare against. Production hardening would add a per-device key
-registration handshake; see SECURITY.md for the threat model and limitation.
+Receives a JSON batch of records and writes each one to DynamoDB. Writes are
+idempotent: a record that was already stored is reported as "duplicate", so a
+device can safely retry a batch after a network error. Requests reach this
+function only after the token authorizer (authorizer.py) has accepted them.
+
+The device's HMAC-SHA256 signature is stored with each record but not verified
+here: each device signs with its own key, which never leaves the device. Server
+side verification needs a key registration step; see docs/SECURITY_MODEL.md.
 
 Environment variables:
-  DYNAMODB_TABLE       Name of the DynamoDB table. Set by the SAM template.
+  DYNAMODB_TABLE   Name of the DynamoDB table (set by template.yaml).
 """
 
 import json
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
 from botocore.exceptions import ClientError
 
-# Initialise the DynamoDB resource once per cold start (module scope = cached
-# across invocations on the same container).
-_dynamodb = boto3.resource("dynamodb")
-_table = _dynamodb.Table(os.environ["DYNAMODB_TABLE"])
+_table = boto3.resource("dynamodb").Table(os.environ["DYNAMODB_TABLE"])
 
-# 90 days. Each row gets a TTL attribute so DynamoDB auto-purges old records.
+# Records are deleted by DynamoDB TTL 90 days after they are received.
 _TTL_SECONDS = 90 * 24 * 60 * 60
+MAX_RECORDS_PER_REQUEST = 500
+_REQUIRED_TEXT = ("id", "deviceId", "workerId")
 
 
 def _response(status: int, body: Dict[str, Any]) -> Dict[str, Any]:
-    """Wrap a JSON body in the API Gateway HTTP API response envelope."""
     return {
         "statusCode": status,
-        "headers": {
-            "Content-Type": "application/json",
-            # CORS — also configured on the HTTP API itself in template.yaml,
-            # but echoing here keeps curl + browser tests symmetric.
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        },
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps(body),
     }
 
 
-def _persist(record: Dict[str, Any]) -> str:
-    """
-    Idempotently write a single record. Returns one of:
-      "stored"     — fresh write
-      "duplicate"  — same (deviceId, id) already in the table
-      raises ClientError for anything else.
-    """
-    item = {
+def _number(value: Any) -> Optional[float]:
+    # bool is a subclass of int in Python, but true/false is not a number here.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def validate(record: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Returns (item, None) for a valid record, or (None, reason) otherwise."""
+    if not isinstance(record, dict):
+        return None, "record must be an object"
+    for key in _REQUIRED_TEXT:
+        value = record.get(key)
+        if not isinstance(value, str) or not 0 < len(value) <= 128:
+            return None, f"{key} must be a string of 1 to 128 characters"
+    timestamp = _number(record.get("timestamp"))
+    confidence = _number(record.get("confidence"))
+    if timestamp is None or confidence is None:
+        return None, "timestamp and confidence must be numbers"
+
+    now = int(time.time())
+    item: Dict[str, Any] = {
         "deviceId": record["deviceId"],
         "id": record["id"],
         "workerId": record["workerId"],
-        "timestamp": int(record["timestamp"]),
-        "latitude": str(record["latitude"]),
-        "longitude": str(record["longitude"]),
-        "confidence": str(record["confidence"]),
-        "signature": record.get("signature", ""),
-        "receivedAt": int(time.time()),
-        "ttl": int(time.time()) + _TTL_SECONDS,
+        "timestamp": int(timestamp),
+        # DynamoDB has no float type; decimals are kept as strings.
+        "confidence": str(confidence),
+        "signature": str(record.get("signature", ""))[:256],
+        "receivedAt": now,
+        "ttl": now + _TTL_SECONDS,
     }
+    latitude = _number(record.get("latitude"))
+    longitude = _number(record.get("longitude"))
+    if (latitude is None) != (longitude is None):
+        return None, "latitude and longitude must be given together"
+    if latitude is not None and longitude is not None:
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return None, "location is out of range"
+        item["latitude"] = str(latitude)
+        item["longitude"] = str(longitude)
+    return item, None
+
+
+def _persist(item: Dict[str, Any]) -> str:
     try:
-        _table.put_item(
-            Item=item,
-            ConditionExpression="attribute_not_exists(id)",
-        )
+        _table.put_item(Item=item, ConditionExpression="attribute_not_exists(id)")
         return "stored"
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
@@ -80,59 +95,42 @@ def _persist(record: Dict[str, Any]) -> str:
 
 def handler(event: Dict[str, Any], _context: Any) -> Dict[str, Any]:
     """
-    Expected POST body:
-      { "records": [ { id, workerId, timestamp, latitude, longitude,
-                       confidence, deviceId, signature }, ... ] }
+    POST body: {"records": [{id, deviceId, workerId, timestamp, confidence,
+    signature, latitude?, longitude?}, ...]}
 
-    Response:
-      200 OK with per-record status array.
-      400 if the body is missing/invalid.
-      500 on unexpected DynamoDB errors.
+    Returns 200 with a per-record status ("stored", "duplicate" or "failed").
+    Clients should mark only "stored" and "duplicate" records as synced.
     """
-    # OPTIONS preflight from a browser — answer 204 with the CORS headers.
-    if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
-        return _response(204, {})
-
     try:
-        raw_body = event.get("body", "")
-        body = json.loads(raw_body) if isinstance(raw_body, str) else (raw_body or {})
-        records = body.get("records") or []
-        if not isinstance(records, list):
-            return _response(400, {"error": "records must be an array"})
-        if not records:
-            return _response(200, {"summary": {"total": 0, "stored": 0, "duplicate": 0, "failed": 0}, "results": []})
+        raw = event.get("body") or "{}"
+        body = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        return _response(400, {"error": "body must be valid JSON"})
 
-        results = []
-        counters = {"stored": 0, "duplicate": 0, "failed": 0}
+    records = body.get("records") if isinstance(body, dict) else None
+    if not isinstance(records, list):
+        return _response(400, {"error": "records must be an array"})
+    if len(records) > MAX_RECORDS_PER_REQUEST:
+        return _response(413, {"error": f"at most {MAX_RECORDS_PER_REQUEST} records per request"})
 
-        for record in records:
-            record_id = record.get("id", "<missing-id>")
-            required = ("id", "deviceId", "workerId", "timestamp", "latitude", "longitude", "confidence")
-            missing = [k for k in required if k not in record]
-            if missing:
-                results.append({"id": record_id, "status": "failed", "reason": f"missing fields: {missing}"})
-                counters["failed"] += 1
-                continue
+    results: List[Dict[str, str]] = []
+    counts = {"stored": 0, "duplicate": 0, "failed": 0}
+    for record in records:
+        record_id = record.get("id") if isinstance(record, dict) else None
+        item, reason = validate(record)
+        if item is None:
+            results.append({"id": str(record_id), "status": "failed", "reason": reason or "invalid"})
+            counts["failed"] += 1
+            continue
+        try:
+            status = _persist(item)
+        except ClientError as exc:
+            # Logged for the operator; the client only gets a generic reason.
+            print(f"DynamoDB error for record {item['id']}: {exc.response['Error']['Code']}")
+            results.append({"id": item["id"], "status": "failed", "reason": "storage error"})
+            counts["failed"] += 1
+            continue
+        results.append({"id": item["id"], "status": status})
+        counts[status] += 1
 
-            try:
-                outcome = _persist(record)
-                results.append({"id": record_id, "status": outcome})
-                counters[outcome] += 1
-            except Exception as exc:  # noqa: BLE001 — log + return per-record
-                print(f"persist failed for {record_id}: {exc}")
-                results.append({"id": record_id, "status": "failed", "reason": str(exc)})
-                counters["failed"] += 1
-
-        return _response(
-            200,
-            {
-                "summary": {"total": len(records), **counters},
-                "results": results,
-            },
-        )
-
-    except json.JSONDecodeError as exc:
-        return _response(400, {"error": f"invalid JSON: {exc}"})
-    except Exception as exc:  # noqa: BLE001
-        print(f"unhandled error: {exc}")
-        return _response(500, {"error": str(exc)})
+    return _response(200, {"summary": {"total": len(records), **counts}, "results": results})

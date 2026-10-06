@@ -1,32 +1,32 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: |
-  datalake-biometric attendance sync backend.
+Description: >
+  Optional, self-hosted sync backend for datalake-biometric: an HTTP API with a
+  token authorizer, a Lambda that stores attendance records, and a DynamoDB
+  table with a 90-day TTL. See backend/README.md before deploying.
 
-  Single-stack deployment of:
-    - DynamoDB table that stores signed attendance records
-      (PK = deviceId, SK = id, GSI on workerId+timestamp for queries).
-    - Python 3.11 Lambda that idempotently writes incoming records.
-    - HTTP API (cheaper than REST API) exposing POST /sync.
-
-  All resources stay comfortably inside the AWS Free Tier for the demo
-  workload (well under 1M Lambda invocations and 25 GB DynamoDB storage).
+Parameters:
+  SyncTokenParameterName:
+    Type: String
+    Default: datalake-biometric/sync-token
+    Description: >
+      SSM Parameter Store name (without the leading slash) of a SecureString
+      holding the API token. Create it before deploying; see backend/README.md.
 
 Globals:
   Function:
-    Runtime: python3.11
+    Runtime: python3.13
     Timeout: 10
     MemorySize: 256
-    Tracing: Active
     Architectures:
-      - arm64  # ~20% cheaper, fully free-tier eligible
+      - arm64
 
 Resources:
   AttendanceTable:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Sub "${AWS::StackName}-attendance"
-      BillingMode: PAY_PER_REQUEST  # zero idle cost; scales for demo bursts
+      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: deviceId
           AttributeType: S
@@ -55,6 +55,8 @@ Resources:
         Enabled: true
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
 
   SyncFunction:
     Type: AWS::Serverless::Function
@@ -66,47 +68,53 @@ Resources:
         Variables:
           DYNAMODB_TABLE: !Ref AttendanceTable
       Policies:
-        - DynamoDBCrudPolicy:
+        - DynamoDBWritePolicy:
             TableName: !Ref AttendanceTable
       Events:
-        SyncEndpoint:
+        Sync:
           Type: HttpApi
           Properties:
-            ApiId: !Ref BiometricApi
+            ApiId: !Ref SyncApi
             Path: /sync
             Method: POST
 
-  BiometricApi:
+  AuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-authorizer"
+      CodeUri: ./
+      Handler: authorizer.handler
+      Environment:
+        Variables:
+          TOKEN_PARAMETER: !Sub "/${SyncTokenParameterName}"
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: !Ref SyncTokenParameterName
+
+  SyncApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      # Note: no authorizer in this reference stack — the device-stored HMAC
-      # signature is preserved with each row for audit but server-side
-      # verification needs per-device key registration to be useful. See
-      # SECURITY.md for the threat model and future hardening notes.
-      CorsConfiguration:
-        AllowMethods:
-          - POST
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
-        AllowOrigins:
-          - '*'
+      # Mobile apps do not need CORS, so no browser origin is allowed.
+      Auth:
+        DefaultAuthorizer: TokenAuthorizer
+        Authorizers:
+          TokenAuthorizer:
+            FunctionArn: !GetAtt AuthorizerFunction.Arn
+            AuthorizerPayloadFormatVersion: "2.0"
+            EnableSimpleResponses: true
+            Identity:
+              Headers:
+                - Authorization
+              ReauthorizeEvery: 300
+      # Caps request rate so a leaked token cannot run up large costs.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
 
 Outputs:
   ApiUrl:
-    Description: HTTPS endpoint that the React Native SyncScreen POSTs to.
-    Value: !Sub "https://${BiometricApi}.execute-api.${AWS::Region}.amazonaws.com/sync"
-    Export:
-      Name: !Sub "${AWS::StackName}-ApiUrl"
-
+    Description: Sync endpoint to enter on the example app's Sync screen.
+    Value: !Sub "https://${SyncApi}.execute-api.${AWS::Region}.amazonaws.com/sync"
   TableName:
-    Description: DynamoDB table name (for AWS Console / CLI debugging).
+    Description: DynamoDB table holding synced records.
     Value: !Ref AttendanceTable
-    Export:
-      Name: !Sub "${AWS::StackName}-TableName"
-
-  FunctionName:
-    Description: Lambda function name (for log tailing).
-    Value: !Ref SyncFunction
-    Export:
-      Name: !Sub "${AWS::StackName}-FunctionName"
