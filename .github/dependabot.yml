@@ -33,6 +33,14 @@ updates:
         update-types: [version-update:semver-minor, version-update:semver-major]
       - dependency-name: react-test-renderer
         update-types: [version-update:semver-minor, version-update:semver-major]
+      # 0.x minor releases that need code or device testing; update them with
+      # the React Native upgrade.
+      - dependency-name: react-native-builder-bob
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: react-native-monorepo-config
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: react-native-blob-util
+        update-types: [version-update:semver-minor, version-update:semver-major]
 
   - package-ecosystem: gradle
     directories:

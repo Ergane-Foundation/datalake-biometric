@@ -13,7 +13,9 @@ export default defineConfig((env) =>
   mergeConfig(config(env), {
     resolve: {
       alias: [
-        { find: pack.name, replacement: local('..') },
+        // The library itself, from source. A file path, because Rolldown cannot
+        // load a directory alias on Windows.
+        { find: new RegExp(`^${pack.name}$`), replacement: local('../src/index.tsx') },
         // react-native-web has no TurboModuleRegistry.
         { find: /^\.\/NativeDatalakeBiometric$/, replacement: local('./web-stubs-native-module.js') },
         { find: 'react-native-vision-camera-face-detector', replacement: webStub },

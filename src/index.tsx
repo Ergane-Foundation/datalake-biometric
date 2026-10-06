@@ -56,11 +56,7 @@ export interface InitializeOptions {
  * - `POOR_QUALITY`: the frame was too blurred or badly exposed.
  */
 export type VerifyStatus =
-  | 'MATCH'
-  | 'NO_MATCH'
-  | 'NO_FACE'
-  | 'MULTIPLE_FACES'
-  | 'POOR_QUALITY';
+  'MATCH' | 'NO_MATCH' | 'NO_FACE' | 'MULTIPLE_FACES' | 'POOR_QUALITY';
 
 export interface VerifyResult {
   status: VerifyStatus;
