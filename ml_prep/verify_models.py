@@ -1,6 +1,9 @@
-﻿"""
-Verify TFLite models in android/src/main/assets/models/ by running a dummy
-inference and reporting input/output shapes, dtype, and inference time.
+# SPDX-License-Identifier: Apache-2.0
+"""
+Verify the TFLite models in android/src/main/assets/models/ by running one
+inference on random input and printing input/output shapes, dtypes and the
+time taken. The time is measured on this computer's CPU, not on a phone, so
+it is only a smoke test, not a benchmark.
 
 Usage:
     python ml_prep/verify_models.py
@@ -27,9 +30,8 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 MODELS_DIR = SCRIPT_DIR / ".." / "android" / "src" / "main" / "assets" / "models"
 
 MODELS = [
-    {"filename": "blazeface.tflite",          "label": "BlazeFace (face detector)"},
-    {"filename": "mobilefacenet_int8.tflite", "label": "MobileFaceNet (face embedder)"},
-    {"filename": "face_mesh.tflite",          "label": "Face Landmarker / face_mesh"},
+    {"filename": "blazeface.tflite",     "label": "BlazeFace short-range (face detector)"},
+    {"filename": "mobilefacenet.tflite", "label": "MobileFaceNet (face embedder)"},
 ]
 
 PASS = "\033[32mPASS\033[0m"
@@ -42,12 +44,12 @@ def dtype_name(detail: dict) -> str:
 
 
 def verify_model(model_path: Path, label: str) -> bool:
-    print(f"\n{'â”€' * 60}")
+    print(f"\n{'-' * 60}")
     print(f"Model : {label}")
     print(f"File  : {model_path.name}")
 
     if not model_path.exists():
-        print(f"Status: {SKIP}  (file not found â€” skipping)")
+        print(f"Status: {SKIP}  (file not found, run: yarn setup:models)")
         return True  # not a failure; file simply hasn't been downloaded yet
 
     try:
@@ -59,11 +61,11 @@ def verify_model(model_path: Path, label: str) -> bool:
 
         print(f"\nInputs  ({len(input_details)}):")
         for d in input_details:
-            print(f"  [{d['index']}] shape={d['shape'].tolist():<30} dtype={dtype_name(d)}")
+            print(f"  [{d['index']}] shape={str(d['shape'].tolist()):<30} dtype={dtype_name(d)}")
 
         print(f"\nOutputs ({len(output_details)}):")
         for d in output_details:
-            print(f"  [{d['index']}] shape={d['shape'].tolist():<30} dtype={dtype_name(d)}")
+            print(f"  [{d['index']}] shape={str(d['shape'].tolist()):<30} dtype={dtype_name(d)}")
 
         # Build random input tensors that match each input's declared shape & dtype
         for d in input_details:
@@ -108,9 +110,9 @@ def main() -> None:
         ok = verify_model(path, model["label"])
         results[model["filename"]] = ok
 
-    print(f"\n{'â•' * 60}")
+    print(f"\n{'=' * 60}")
     print("Summary")
-    print(f"{'â•' * 60}")
+    print(f"{'=' * 60}")
 
     all_present_passed = True
     for model in MODELS:

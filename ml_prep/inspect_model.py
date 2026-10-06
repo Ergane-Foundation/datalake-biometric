@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 Inspect a .tflite model and print its input/output tensor shapes + dtypes.
 
@@ -8,7 +9,7 @@ confirm it matches what the native code expects, e.g. MobileFaceNet:
   output : [1, N]           float32 (N is the embedding dimension)
 
 Usage:
-    python ml_prep/inspect_model.py android/src/main/assets/models/mobilefacenet_int8.tflite
+    python ml_prep/inspect_model.py android/src/main/assets/models/mobilefacenet.tflite
     python ml_prep/inspect_model.py            # inspects all models in the assets folder
 """
 
@@ -45,7 +46,7 @@ def inspect(path: Path) -> None:
     print(f"\n{'=' * 60}\n{path.name}  ({size_kb:.1f} KB)\n{'=' * 60}")
 
     if size_kb < 1:
-        print("  ⚠️  Suspiciously tiny — likely a placeholder/stub, not a real model.")
+        print("  WARNING: smaller than 1 KB, probably a placeholder, not a real model.")
 
     interp = _load_interpreter(path)
     interp.allocate_tensors()
@@ -68,12 +69,12 @@ def main() -> None:
         return
     for t in targets:
         if not t.exists():
-            print(f"\n✗ Not found: {t}")
+            print(f"\nNot found: {t}")
             continue
         try:
             inspect(t)
         except Exception as exc:
-            print(f"  ✗ Could not load: {type(exc).__name__}: {exc}")
+            print(f"  Could not load: {type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":
