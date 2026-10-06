@@ -158,7 +158,9 @@ jobs:
     runs-on: macos-latest
 
     env:
-      XCODE_VERSION: 16
+      # GitHub retires old Xcode versions from its macOS images; the latest
+      # stable one is always installed.
+      XCODE_VERSION: latest-stable
       TURBO_CACHE_DIR: .turbo/ios
       RCT_USE_RN_DEP: 1
       RCT_USE_PREBUILT_RNCORE: 1
