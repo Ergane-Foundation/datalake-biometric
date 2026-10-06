@@ -1,140 +1,143 @@
-﻿# Contributing
+# Contributing
 
-Contributions are always welcome, no matter how large or small!
+Thank you for helping. This guide covers setup on Windows, macOS and Linux, the
+checks your change must pass, and how pull requests are reviewed. By taking part
+you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-We want this community to be friendly and respectful to each other. Please follow it in all your interactions with the project. Before contributing, please read the [code of conduct](./CODE_OF_CONDUCT.md).
+Security problems are not reported here: see [SECURITY.md](SECURITY.md).
 
-## Development workflow
+## What you need
 
-This project is a monorepo managed using [Yarn workspaces](https://yarnpkg.com/features/workspaces). It contains the following packages:
+| Tool | Version | Notes |
+|------|---------|-------|
+| Node.js | 24 (see `.nvmrc`) | nvm, fnm or the installer from nodejs.org |
+| Yarn | 4, through Corepack | run `corepack enable` once; do not install Yarn globally |
+| JDK | 17 | for Android builds |
+| Android SDK | platform 36, build-tools 36, NDK 27.1 | Android Studio installs these |
+| Xcode | 16 | macOS only, for iOS (experimental) |
+| Python | 3.10 or newer | only for `ml_prep/` and `backend/` |
 
-- The library package in the root directory.
-- An example app in the `example/` directory.
+Windows works for everything except iOS. Use PowerShell or Git Bash; the project
+scripts are written in Node, so they run the same everywhere.
 
-To get started with the project, make sure you have the correct version of [Node.js](https://nodejs.org/) installed. See the [`.nvmrc`](./.nvmrc) file for the version used in this project.
-
-Run `yarn` in the root directory to install the required dependencies for each package:
-
-```sh
-yarn
-```
-
-> Since the project relies on Yarn workspaces, you cannot use [`npm`](https://github.com/npm/cli) for development without manually migrating.
-
-The [example app](/example/) demonstrates usage of the library. You need to run it to test any changes you make.
-
-It is configured to use the local version of the library, so any changes you make to the library's source code will be reflected in the example app. Changes to the library's JavaScript code will be reflected in the example app without a rebuild, but native code changes will require a rebuild of the example app.
-
-If you want to use Android Studio or Xcode to edit the native code, you can open the `example/android` or `example/ios` directories respectively in those editors. To edit the Objective-C or Swift files, open `example/ios/DatalakeBiometricExample.xcworkspace` in Xcode and find the source files at `Pods > Development Pods > datalake-biometric`.
-
-To edit the Java or Kotlin files, open `example/android` in Android studio and find the source files at `datalake-biometric` under `Android`.
-
-You can use various commands from the root directory to work with the project.
-
-To start the packager:
+## Setup
 
 ```sh
-yarn example start
+git clone https://github.com/<your-username>/datalake-biometric.git
+cd datalake-biometric
+corepack enable
+yarn install
+yarn setup
 ```
 
-To run the example app on Android:
+`yarn setup` downloads the two models and checks their SHA-256 hashes
+(`yarn setup:models`), then creates the debug signing key for the example app
+(`yarn setup:keystore`). Both results are git-ignored.
+
+The repository is a Yarn workspace: the library is at the root, the example app
+in `example/`.
+
+## Running the example app
 
 ```sh
-yarn example android
+yarn example start      # Metro bundler
+yarn example android    # in a second terminal, with a phone or emulator
+yarn example ios        # macOS; run `cd example/ios && pod install` first
 ```
 
-To run the example app on iOS:
+Face features need a real camera; an emulator only checks that the app starts.
+Changes in `src/` reload in the app; changes in `android/` or `ios/` need a rebuild.
+
+## Checks
+
+Run these before opening a pull request. CI runs the same ones.
 
 ```sh
-yarn example ios
+yarn lint:encoding        # files are UTF-8 without BOM, no garbled characters
+yarn lint                 # ESLint and Prettier (yarn lint --fix fixes formatting)
+yarn typecheck            # library types
+yarn example typecheck    # example app types
+yarn test                 # library tests
+yarn example test         # example app tests
+yarn prepare              # builds the library into lib/
+yarn build:web            # checks that the example still bundles for the web
 ```
 
-To confirm that the app is running with the new architecture, you can check the Metro logs for a message like this:
+For native or backend changes, also run:
 
 ```sh
-Running "DatalakeBiometricExample" with {"fabric":true,"initialProps":{"concurrentRoot":true},"rootTag":1}
+cd example/android && ./gradlew :datalake-biometric:testDebugUnitTest   # Kotlin unit tests
+cd backend && python -m pytest                                             # see backend/README.md
 ```
 
-Note the `"fabric":true` and `"concurrentRoot":true` properties.
+On Windows use `gradlew.bat` instead of `./gradlew`.
 
-To run the example app on Web:
+Git hooks (installed by `yarn install` through lefthook) lint and type-check your
+staged files and check your commit message.
 
-```sh
-yarn example web
+## Commit messages
+
+We use [Conventional Commits](https://www.conventionalcommits.org), checked by
+commitlint:
+
+```
+<type>(<optional scope>): <subject>
+
+<optional body: why the change is needed>
 ```
 
-Make sure your code passes TypeScript:
+- `type` is one of: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
+  `ci`, `chore`, `style`, `revert`.
+- Useful scopes: `android`, `ios`, `js`, `liveness`, `example`, `backend`,
+  `ml`, `docs`, `ci`.
+- Subject in the imperative mood, lower case, no full stop, short (the whole
+  first line must stay under 100 characters; aim for 72).
+- Examples:
+  - `fix(android): close the interpreter when the module is invalidated`
+  - `docs: explain how to measure verify latency`
 
-```sh
-yarn typecheck
-```
+## Branches and pull requests
 
-To check for linting errors, run the following:
+1. Comment on the issue you want to work on and wait to be assigned, so two
+   people do not do the same work.
+2. Fork the repository and create a branch from `main` named
+   `<type>/<short-description>`, for example `fix/camera-permission-settings`.
+3. Keep the pull request focused on one issue. Link it in the description
+   (`Closes #123`).
+4. Fill in the pull request template, including how you tested the change.
+5. Make sure all checks pass. A maintainer will review; please answer comments
+   by pushing new commits rather than force-pushing, so the review is easy to follow.
 
-```sh
-yarn lint
-```
+## What makes a good pull request
 
-To fix formatting errors, run the following:
+- It solves the linked issue and nothing else. No unrelated formatting changes.
+- It includes tests for new behavior, or explains why a test is not practical.
+- It updates the documentation when behavior or the API changes.
+- Native changes cover both Android and iOS, or say clearly that they only touch one.
+- New dependencies are necessary, actively maintained and have a license
+  compatible with Apache-2.0. Mention them in the description.
+- It never writes face images or templates to disk or logs, and never sends
+  them over the network.
+- Documentation is in plain English, ASCII punctuation, and makes no claim that
+  is not measured or cited.
 
-```sh
-yarn lint --fix
-```
+## Open-source event rules
 
-Remember to add tests for your change if possible. Run the unit tests by:
+During community events (for example Hacktoberfest), we value quality over quantity.
 
-```sh
-yarn test
-```
+- Only pull requests that address an open issue, or a fix that clearly deserves
+  one, are reviewed.
+- Pull requests that only change whitespace, reword text without improving it,
+  add your name somewhere, or are generated without understanding the code, are
+  closed and labelled `invalid` or `spam`.
+- Accepted pull requests are labelled `hacktoberfest-accepted`.
+- Be patient: maintainers are volunteers. Do not ping repeatedly.
 
+## Getting help
 
-### Commit message convention
+See [SUPPORT.md](SUPPORT.md).
 
-We follow the [conventional commits specification](https://www.conventionalcommits.org/en) for our commit messages:
+## License
 
-- `fix`: bug fixes, e.g. fix crash due to deprecated method.
-- `feat`: new features, e.g. add new method to the module.
-- `refactor`: code refactor, e.g. migrate from class components to hooks.
-- `docs`: changes into documentation, e.g. add usage example for the module.
-- `test`: adding or updating tests, e.g. add integration tests using detox.
-- `chore`: tooling changes, e.g. change CI config.
-
-Our pre-commit hooks verify that your commit message matches this format when committing.
-
-
-### Publishing to npm
-
-We use [release-it](https://github.com/release-it/release-it) to make it easier to publish new versions. It handles common tasks like bumping version based on semver, creating tags and releases etc.
-
-To publish new versions, run the following:
-
-```sh
-yarn release
-```
-
-
-### Scripts
-
-The `package.json` file contains various scripts for common tasks:
-
-- `yarn`: setup project by installing dependencies.
-- `yarn typecheck`: type-check files with TypeScript.
-  - `yarn lint`: lint files with [ESLint](https://eslint.org/).
-    - `yarn test`: run unit tests with [Jest](https://jestjs.io/).
-  - `yarn example start`: start the Metro server for the example app.
-- `yarn example android`: run the example app on Android.
-- `yarn example ios`: run the example app on iOS.
-  - `yarn example web`: run the example app on Web.
-- `yarn example build:web`: build the example app for Web.
-  
-### Sending a pull request
-
-> **Working on your first pull request?** You can learn how from this _free_ series: [How to Contribute to an Open Source Project on GitHub](https://app.egghead.io/playlists/how-to-contribute-to-an-open-source-project-on-github).
-
-When you're sending a pull request:
-
-- Prefer small pull requests focused on one change.
-- Verify that linters and tests are passing.
-- Review the documentation to make sure it looks good.
-- Follow the pull request template when opening a pull request.
-- For pull requests that change the API or implementation, discuss with maintainers first by opening an issue.
+By contributing, you agree that your contributions are licensed under the
+[Apache License 2.0](LICENSE), as stated in its section 5.
