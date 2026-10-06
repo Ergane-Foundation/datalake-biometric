@@ -1,0 +1,24 @@
+name: Documentation
+description: Something in the docs is wrong, missing or unclear.
+labels: [documentation]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Where
+      description: File and section, or URL.
+      placeholder: e.g. docs/ARCHITECTURE.md, "Signed records"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested text or fix

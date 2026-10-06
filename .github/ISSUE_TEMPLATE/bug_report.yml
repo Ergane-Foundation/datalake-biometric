@@ -1,67 +1,83 @@
-﻿name: ðŸ› Bug report
-description: Report a reproducible bug or regression in this library.
+name: Bug report
+description: Something does not work as documented.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        # Bug report
+        Thanks for reporting. Please search existing issues first.
+        Security problems must not be reported here; see SECURITY.md.
+        Never attach photos of real people's faces or other personal data.
 
-        ðŸ‘‹ Hi!
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
 
-        **Please fill the following carefully before opening a new issue â—**
-        *(Your issue may be closed if it doesn't provide the required pieces of information)*
-  - type: checkboxes
-    attributes:
-      label: Before submitting a new issue
-      description: Please perform simple checks first.
-      options:
-        - label: I tested using the latest version of the library, as the bug might be already fixed.
-          required: true
-        - label: I tested using a [supported version](https://github.com/reactwg/react-native-releases/blob/main/docs/support.md) of react native.
-          required: true
-        - label: I checked for possible duplicate issues, with possible answers.
-          required: true
   - type: textarea
-    id: summary
-    attributes:
-      label: Bug summary
-      description: |
-        Provide a clear and concise description of what the bug is.
-        If needed, you can also provide other samples: error messages / stack traces, screenshots, gifs, etc.
-    validations:
-      required: true
-  - type: input
-    id: library-version
-    attributes:
-      label: Library version
-      description: What version of the library are you using?
-      placeholder: "x.x.x"
-    validations:
-      required: true
-  - type: textarea
-    id: react-native-info
-    attributes:
-      label: Environment info
-      description: Run `react-native info` in your terminal and paste the results here.
-      render: shell
-    validations:
-      required: true
-  - type: textarea
-    id: steps-to-reproduce
+    id: steps
     attributes:
       label: Steps to reproduce
-      description: |
-        You must provide a clear list of steps and code to reproduce the problem.
-      value: |
-        1. â€¦
-        2. â€¦
+      description: A minimal sequence of steps, ideally in the example app.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
     validations:
       required: true
-  - type: input
-    id: reproducible-example
+
+  - type: textarea
+    id: error
     attributes:
-      label: Reproducible example repository 
-      description: Please provide a link to a repository on GitHub with a reproducible example.
+      label: Error code and message
+      description: The `code` and `message` of the rejected promise, and relevant log output.
+      render: text
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Android
+        - iOS
+        - Example app only
+        - Sync backend
+        - ml_prep scripts
     validations:
       required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS version
+      placeholder: e.g. Samsung Galaxy A17, Android 14
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Library version or commit
+      placeholder: e.g. 0.2.0 or a1b2c3d
+    validations:
+      required: true
+
+  - type: input
+    id: react-native
+    attributes:
+      label: React Native version
+      placeholder: e.g. 0.85.0
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: "`yarn setup:models --check` passes."
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
