@@ -1,4 +1,5 @@
-﻿package com.datalakebiometric
+// SPDX-License-Identifier: Apache-2.0
+package com.datalakebiometric
 
 import com.facebook.react.BaseReactPackage
 import com.facebook.react.bridge.NativeModule

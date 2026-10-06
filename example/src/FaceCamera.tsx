@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import {
   forwardRef,
   useCallback,
@@ -31,7 +32,7 @@ export const FaceCamera = forwardRef<Camera, Props>(function FaceCamera(
   const [asked, setAsked] = useState(false);
   // First-grant users have to wait ~600 ms after permission flips before the
   // <Camera /> mounts, so Android's SurfaceView completes its first layout
-  // pass — otherwise the capture session opens against an unlaid-out surface
+  // pass - otherwise the capture session opens against an unlaid-out surface
   // and the preview stays black even though the OS shows the camera as active.
   const [readyToMount, setReadyToMount] = useState(hasPermission);
   // Safety net: bump once if onPreviewStarted hasn't fired ~1.5 s after mount.
@@ -86,7 +87,7 @@ export const FaceCamera = forwardRef<Camera, Props>(function FaceCamera(
   if (!readyToMount || device == null) {
     return (
       <View style={[s.card, { alignItems: 'center' }]}>
-        <Text style={s.cardBody}>Starting camera…</Text>
+        <Text style={s.cardBody}>Starting camera...</Text>
       </View>
     );
   }

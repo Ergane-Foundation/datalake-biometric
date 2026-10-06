@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import { useEffect, useState } from 'react';
 import { Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { BiometricSDK, type VerifyResult } from 'datalake-biometric';
@@ -65,7 +66,7 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    // Push content below the system status bar (notch) — SafeAreaView was
+    // Push content below the system status bar (notch) - SafeAreaView was
     // deprecated, and react-native-safe-area-context would be another native dep.
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0,
   },

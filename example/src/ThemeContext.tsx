@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import {
   createContext,
   useCallback,
@@ -9,7 +10,7 @@ import {
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// --- Types ---
 
 export type ThemeMode = 'light' | 'dark' | 'auto';
 
@@ -35,7 +36,7 @@ interface ThemeContextValue {
   setMode: (mode: ThemeMode) => void;
 }
 
-// ─── Palettes ────────────────────────────────────────────────────────────────
+// --- Palettes ---
 
 const lightColors: ThemeColors = {
   bg: '#F5F5F5',
@@ -67,11 +68,11 @@ const darkColors: ThemeColors = {
   cardAlt: '#2C2C2C',
 };
 
-// ─── Storage key ─────────────────────────────────────────────────────────────
+// --- Storage key ---
 
 const STORAGE_KEY = '@theme_mode';
 
-// ─── Context ─────────────────────────────────────────────────────────────────
+// --- Context ---
 
 const ThemeContext = createContext<ThemeContextValue>({
   mode: 'auto',
@@ -80,7 +81,7 @@ const ThemeContext = createContext<ThemeContextValue>({
   setMode: () => {},
 });
 
-// ─── Provider ────────────────────────────────────────────────────────────────
+// --- Provider ---
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme = useColorScheme(); // 'light' | 'dark' | null
@@ -122,7 +123,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── Hook ────────────────────────────────────────────────────────────────────
+// --- Hook ---
 
 export function useTheme(): ThemeContextValue {
   return useContext(ThemeContext);
