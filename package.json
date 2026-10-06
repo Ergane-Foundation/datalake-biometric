@@ -37,10 +37,14 @@
     "prepare": "bob build",
     "typecheck": "tsc",
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
+    "lint:encoding": "node scripts/check-encoding.mjs",
     "test": "jest",
     "release": "release-it --only-version",
-    "web": "vite",
-    "build:web": "vite build"
+    "web": "yarn example web",
+    "build:web": "yarn example build:web",
+    "setup": "yarn setup:models && yarn setup:keystore",
+    "setup:models": "node scripts/setup-models.mjs",
+    "setup:keystore": "node scripts/setup-debug-keystore.mjs"
   },
   "keywords": [
     "react-native",
@@ -49,14 +53,17 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vaani1127/datalake-biometric.git"
+    "url": "git+https://github.com/Ergane-Foundation/datalake-biometric.git"
   },
-  "author": "vaani1127 <147430351+vaani1127@users.noreply.github.com> (https://github.com/vaani1127)",
-  "license": "MIT",
+  "author": "Dhruv Goyal <151380878+DhruvGoyal404@users.noreply.github.com> (https://github.com/DhruvGoyal404)",
+  "contributors": [
+    "Vaani Prashar <147430351+vaani1127@users.noreply.github.com> (https://github.com/vaani1127)"
+  ],
+  "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/vaani1127/datalake-biometric/issues"
+    "url": "https://github.com/Ergane-Foundation/datalake-biometric/issues"
   },
-  "homepage": "https://github.com/vaani1127/datalake-biometric#readme",
+  "homepage": "https://github.com/Ergane-Foundation/datalake-biometric#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },

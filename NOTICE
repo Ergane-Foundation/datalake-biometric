@@ -1,0 +1,8 @@
+datalake-biometric
+Copyright 2026 Dhruv Goyal and Vaani Prashar
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The machine learning models used by this project are not part of this
+distribution. They are downloaded separately by scripts/setup-models.mjs and
+remain under their own licenses. See THIRD_PARTY_NOTICES.md and docs/MODELS.md.
