@@ -40,6 +40,11 @@ jobs:
       - name: Check file encoding
         run: yarn lint:encoding
 
+      # React must match the renderer bundled in React Native exactly, or the
+      # app crashes on the first tap while every other check passes.
+      - name: Check React matches the React Native renderer
+        run: yarn lint:react
+
       - name: Lint files
         run: yarn lint
 

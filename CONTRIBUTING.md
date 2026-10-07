@@ -69,6 +69,7 @@ Run these before opening a pull request. CI runs the same ones.
 
 ```sh
 yarn lint:encoding        # files are UTF-8 without BOM, no garbled characters
+yarn lint:react           # react matches the renderer bundled in React Native
 yarn lint                 # ESLint and Prettier (yarn lint --fix fixes formatting)
 yarn typecheck            # library types
 yarn example typecheck    # example app types
