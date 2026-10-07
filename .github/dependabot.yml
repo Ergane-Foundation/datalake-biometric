@@ -5,9 +5,11 @@
 #
 # Packages that must move together with a React Native upgrade are ignored here
 # (patch updates still come through): React Native 0.x minor releases are
-# breaking changes, and React, the React Native tooling and the Android build
-# tools are pinned to what each React Native release supports. Upgrade them all
-# at once, by hand (see the issue about upgrading React Native).
+# breaking changes, and the React Native tooling and the Android build tools are
+# pinned to what each React Native release supports. React, react-dom and
+# react-test-renderer get no updates at all, not even patches: they must equal
+# the renderer bundled in React Native exactly (yarn lint:react checks this).
+# Upgrade them all at once, by hand (see the issue about upgrading React Native).
 version: 2
 updates:
   - package-ecosystem: npm
@@ -27,12 +29,10 @@ updates:
         update-types: [version-update:semver-minor, version-update:semver-major]
       - dependency-name: '@react-native-community/cli*'
         update-types: [version-update:semver-minor, version-update:semver-major]
+      # All updates, including patches (see the comment at the top).
       - dependency-name: react
-        update-types: [version-update:semver-minor, version-update:semver-major]
       - dependency-name: react-dom
-        update-types: [version-update:semver-minor, version-update:semver-major]
       - dependency-name: react-test-renderer
-        update-types: [version-update:semver-minor, version-update:semver-major]
       # 0.x minor releases that need code or device testing; update them with
       # the React Native upgrade.
       - dependency-name: react-native-builder-bob
