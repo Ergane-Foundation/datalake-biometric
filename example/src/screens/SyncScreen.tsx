@@ -11,7 +11,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
-import { BiometricSDK, type AttendanceRecord } from 'datalake-biometric';
+import { BiometricSDK, type AttendanceRecord } from 'faceproof';
 import { DEFAULT_SYNC_ENDPOINT } from '../config';
 import { useTheme } from '../ThemeContext';
 import { s } from '../theme';

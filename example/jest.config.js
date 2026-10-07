@@ -8,6 +8,6 @@ module.exports = {
   ],
   moduleNameMapper: {
     // Resolve the library from source so tests do not need a prior build.
-    '^datalake-biometric$': '<rootDir>/../src/index',
+    '^faceproof$': '<rootDir>/../src/index',
   },
 };

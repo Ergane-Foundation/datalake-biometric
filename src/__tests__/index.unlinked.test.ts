@@ -2,7 +2,7 @@
 import { expect, it, jest } from '@jest/globals';
 
 // Simulates an app where the native part is not linked (or Jest, or the web).
-jest.mock('../NativeDatalakeBiometric', () => ({
+jest.mock('../NativeFaceproof', () => ({
   __esModule: true,
   default: null,
 }));

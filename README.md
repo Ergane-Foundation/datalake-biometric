@@ -1,8 +1,8 @@
-# datalake-biometric
+# Faceproof
 
-[![CI](https://github.com/Ergane-Foundation/datalake-biometric/actions/workflows/ci.yml/badge.svg)](https://github.com/Ergane-Foundation/datalake-biometric/actions/workflows/ci.yml)
+[![CI](https://github.com/Ergane-Foundation/faceproof/actions/workflows/ci.yml/badge.svg)](https://github.com/Ergane-Foundation/faceproof/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![npm](https://img.shields.io/npm/v/datalake-biometric)](https://www.npmjs.com/package/datalake-biometric)
+[![npm](https://img.shields.io/npm/v/faceproof)](https://www.npmjs.com/package/faceproof)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 Open-source offline face verification and liveness SDK for React Native.
@@ -51,8 +51,8 @@ The fastest way to see it working is the example app on an Android phone.
 Requirements: Node 24, Yarn (via Corepack), JDK 17, Android SDK with platform 36.
 
 ```sh
-git clone https://github.com/Ergane-Foundation/datalake-biometric.git
-cd datalake-biometric
+git clone https://github.com/Ergane-Foundation/faceproof.git
+cd faceproof
 yarn install
 yarn setup            # download and verify the models, create a debug keystore
 yarn example android  # with a phone connected over USB
@@ -84,7 +84,7 @@ import {
   createLivenessState,
   pickChallenges,
   updateLiveness,
-} from 'datalake-biometric';
+} from 'faceproof';
 
 // Once, at app start.
 await BiometricSDK.initialize();

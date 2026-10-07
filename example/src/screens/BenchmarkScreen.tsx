@@ -7,7 +7,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
-import { BiometricSDK, type VerifyResult } from 'datalake-biometric';
+import { BiometricSDK, type VerifyResult } from 'faceproof';
 import { useTheme } from '../ThemeContext';
 import { s } from '../theme';
 import type { Screen } from '../types';

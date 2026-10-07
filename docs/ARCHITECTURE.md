@@ -11,7 +11,7 @@ flowchart LR
     Cam["Camera + face detector<br/>(example: Vision Camera + ML Kit)"]
     Live["Liveness session<br/>src/liveness.ts"]
   end
-  subgraph SDK["datalake-biometric"]
+  subgraph SDK["faceproof"]
     JS["BiometricSDK<br/>src/index.tsx"]
     Native["Native module<br/>Android: Kotlin<br/>iOS: Swift (experimental)"]
     DB[("Encrypted SQLite<br/>(SQLCipher)")]
@@ -32,7 +32,7 @@ Uploading records is the app's decision, for example with the reference backend.
 
 | File | Responsibility |
 |------|----------------|
-| `NativeDatalakeBiometric.ts` | TurboModule spec. Codegen reads it to generate the native bindings. |
+| `NativeFaceproof.ts` | TurboModule spec. Codegen reads it to generate the native bindings. |
 | `index.tsx` | Typed public API (`BiometricSDK`), input checks, clear error if the native module is missing. |
 | `liveness.ts` | Liveness session as pure functions. No camera or native dependency, fully unit tested. |
 | `random.ts` | Unbiased random integers from a pool of bytes, used to pick challenges. |
@@ -88,7 +88,7 @@ flowchart TD
 
 | Class | Responsibility |
 |-------|----------------|
-| `DatalakeBiometricModule` | Bridge entry point. Creates the engines lazily, maps errors to stable codes, closes everything in `invalidate()`. |
+| `FaceproofModule` | Bridge entry point. Creates the engines lazily, maps errors to stable codes, closes everything in `invalidate()`. |
 | `TFLiteEngine` | Face alignment, MobileFaceNet embedding, quality score. |
 | `BlazeFaceDetector` | Runs BlazeFace on a letterboxed 128x128 input; returns boxes and 6 keypoints. |
 | `BlazeFaceDecoder` | Anchors, box and keypoint decoding and weighted non-maximum suppression, as in MediaPipe. Pure Kotlin, unit tested. |

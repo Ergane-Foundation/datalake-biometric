@@ -83,7 +83,7 @@ BLAZE_NMS_IOU = 0.3
 EMBED_SIZE = 112          # FaceAligner.SIZE
 # FaceAligner.TEMPLATE: right eye, left eye, nose tip, mouth center (person's view).
 TEMPLATE = np.array([[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [56.1396, 92.2848]])
-MAX_SIDE = 720            # DatalakeBiometricModule.MAX_SIDE
+MAX_SIDE = 720            # FaceproofModule.MAX_SIDE
 DEFAULT_MIN_QUALITY = 0.5
 
 
@@ -435,7 +435,7 @@ def main() -> None:
         plt.semilogx(np.maximum(far_curve, 1e-7), tar_curve)
         plt.xlabel("False accept rate")
         plt.ylabel("True accept rate")
-        plt.title("LFW ROC, datalake-biometric pipeline")
+        plt.title("LFW ROC, faceproof pipeline")
         plt.grid(True, which="both", alpha=0.3)
         plt.tight_layout()
         plt.savefig(args.out / "roc.png", dpi=150)
@@ -470,7 +470,7 @@ def main() -> None:
     }
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    print("\n=== Results (LFW, datalake-biometric Android pipeline) ===")
+    print("\n=== Results (LFW, faceproof Android pipeline) ===")
     print(f"Images: {len(names)}, excluded: {outcome['no_face']} no face, {outcome['multiple_faces']} several faces "
           f"({excluded_images / len(names) * 100:.1f}%)")
     print(f"Images below quality {DEFAULT_MIN_QUALITY} (counted, not excluded): {outcome['low_quality']}")

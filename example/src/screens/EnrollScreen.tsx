@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Camera, useCameraPermission } from 'react-native-vision-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BiometricSDK } from 'datalake-biometric';
+import { BiometricSDK } from 'faceproof';
 import { FaceCamera } from '../FaceCamera';
 import { useFaceObservations, takePhotoBase64 } from '../camera';
 import { useTheme } from '../ThemeContext';

@@ -2,7 +2,7 @@
   "compilerOptions": {
     "rootDir": ".",
     "paths": {
-      "datalake-biometric": ["./src/index"]
+      "faceproof": ["./src/index"]
     },
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,

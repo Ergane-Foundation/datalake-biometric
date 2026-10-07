@@ -33,7 +33,7 @@ Create a long random token and store it as a SecureString. Do not commit it.
 macOS or Linux:
 
 ```sh
-aws ssm put-parameter --name /datalake-biometric/sync-token --type SecureString \
+aws ssm put-parameter --name /faceproof/sync-token --type SecureString \
   --value "$(openssl rand -base64 32)"
 ```
 
@@ -42,11 +42,11 @@ Windows PowerShell:
 ```powershell
 $bytes = New-Object byte[] 32
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-aws ssm put-parameter --name /datalake-biometric/sync-token --type SecureString --value ([Convert]::ToBase64String($bytes))
+aws ssm put-parameter --name /faceproof/sync-token --type SecureString --value ([Convert]::ToBase64String($bytes))
 ```
 
 To read it later (for entering it in the app):
-`aws ssm get-parameter --name /datalake-biometric/sync-token --with-decryption`
+`aws ssm get-parameter --name /faceproof/sync-token --with-decryption`
 
 To rotate it, run `put-parameter` again with `--overwrite`. The authorizer picks
 up the new value within five minutes.
@@ -129,7 +129,7 @@ The tests use fakes for DynamoDB and SSM, so they need no AWS account.
 
 ```sh
 aws cloudformation delete-stack --stack-name <stack-name> --region <region>
-aws ssm delete-parameter --name /datalake-biometric/sync-token
+aws ssm delete-parameter --name /faceproof/sync-token
 ```
 
 The DynamoDB table and its data are deleted with the stack.

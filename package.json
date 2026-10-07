@@ -1,5 +1,5 @@
 {
-  "name": "datalake-biometric",
+  "name": "faceproof",
   "version": "0.1.0",
   "description": "Offline facial recognition and liveness detection for React Native",
   "main": "./lib/module/index.js",
@@ -32,7 +32,7 @@
     "!**/.*"
   ],
   "scripts": {
-    "example": "yarn workspace datalake-biometric-example",
+    "example": "yarn workspace faceproof-example",
     "clean": "del-cli android/build example/android/build example/android/app/build example/ios/build lib",
     "prepare": "bob build",
     "typecheck": "tsc",
@@ -54,7 +54,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Ergane-Foundation/datalake-biometric.git"
+    "url": "git+https://github.com/Ergane-Foundation/faceproof.git"
   },
   "author": "Dhruv Goyal <151380878+DhruvGoyal404@users.noreply.github.com> (https://github.com/DhruvGoyal404)",
   "contributors": [
@@ -62,9 +62,9 @@
   ],
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/Ergane-Foundation/datalake-biometric/issues"
+    "url": "https://github.com/Ergane-Foundation/faceproof/issues"
   },
-  "homepage": "https://github.com/Ergane-Foundation/datalake-biometric#readme",
+  "homepage": "https://github.com/Ergane-Foundation/faceproof#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },
@@ -130,11 +130,11 @@
     ]
   },
   "codegenConfig": {
-    "name": "DatalakeBiometricSpec",
+    "name": "FaceproofSpec",
     "type": "modules",
     "jsSrcsDir": "src",
     "android": {
-      "javaPackageName": "com.datalakebiometric"
+      "javaPackageName": "com.faceproof"
     }
   },
   "prettier": {

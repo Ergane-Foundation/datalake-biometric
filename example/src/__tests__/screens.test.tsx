@@ -26,8 +26,8 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 // Keep the real liveness logic; replace only the calls into native code.
-jest.mock('datalake-biometric', () => ({
-  ...jest.requireActual('datalake-biometric'),
+jest.mock('faceproof', () => ({
+  ...jest.requireActual('faceproof'),
   BiometricSDK: {
     getPendingRecords: jest.fn(async () => []),
     // Always index 0: picks blink, then smile.

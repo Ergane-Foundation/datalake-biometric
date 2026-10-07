@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-import NativeDatalakeBiometric, { type Spec } from './NativeDatalakeBiometric';
+import NativeFaceproof, { type Spec } from './NativeFaceproof';
 import { randomIntFromBytes, type RandomInt } from './random';
 
 export * from './liveness';
 export { randomIntFromBytes, type RandomInt } from './random';
 
 const LINKING_ERROR =
-  'The DatalakeBiometric native module is not available. Make sure the package is ' +
+  'The Faceproof native module is not available. Make sure the package is ' +
   'installed, the app was rebuilt after installing it, and you are running on ' +
   'Android or iOS (Expo Go and the web are not supported).';
 
 function native(): Spec {
-  if (!NativeDatalakeBiometric) {
+  if (!NativeFaceproof) {
     throw new Error(LINKING_ERROR);
   }
-  return NativeDatalakeBiometric;
+  return NativeFaceproof;
 }
 
 // --- Types -------------------------------------------------------------------

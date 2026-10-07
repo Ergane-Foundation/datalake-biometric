@@ -78,9 +78,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "datalakebiometric.example"
+    namespace "com.faceproof.example"
     defaultConfig {
-        applicationId "datalakebiometric.example"
+        applicationId "com.faceproof.example"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

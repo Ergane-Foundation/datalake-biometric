@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { act, renderHook } from '@testing-library/react-native';
-import type { FaceObservation } from 'datalake-biometric';
+import type { FaceObservation } from 'faceproof';
 
 // The frame-processor worklet is native; here the hook's JS-side handler is
 // captured from useRunOnJS and called directly with what the worklet would send.

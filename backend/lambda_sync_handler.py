@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-Sync endpoint for attendance records queued by the datalake-biometric SDK.
+Sync endpoint for attendance records queued by the faceproof SDK.
 
 Receives a JSON batch of records and writes each one to DynamoDB. Writes are
 idempotent: a record that was already stored is reported as "duplicate", so a

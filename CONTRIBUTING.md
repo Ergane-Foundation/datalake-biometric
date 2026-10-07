@@ -23,8 +23,8 @@ scripts are written in Node, so they run the same everywhere.
 ## Setup
 
 ```sh
-git clone https://github.com/<your-username>/datalake-biometric.git
-cd datalake-biometric
+git clone https://github.com/<your-username>/faceproof.git
+cd faceproof
 corepack enable
 yarn install
 yarn setup
@@ -82,7 +82,7 @@ yarn build:web            # checks that the example still bundles for the web
 For native or backend changes, also run:
 
 ```sh
-cd example/android && ./gradlew :datalake-biometric:testDebugUnitTest   # Kotlin unit tests
+cd example/android && ./gradlew :faceproof:testDebugUnitTest   # Kotlin unit tests
 cd backend && python -m pytest                                             # see backend/README.md
 ```
 

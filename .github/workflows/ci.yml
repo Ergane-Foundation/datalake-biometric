@@ -151,7 +151,7 @@ jobs:
       - name: Run Kotlin unit tests
         if: env.turbo_cache_hit != 1
         working-directory: example/android
-        run: ./gradlew :datalake-biometric:testDebugUnitTest --no-daemon --console=plain
+        run: ./gradlew :faceproof:testDebugUnitTest --no-daemon --console=plain
 
       - name: Build example for Android
         env:
