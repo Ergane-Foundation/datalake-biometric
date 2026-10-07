@@ -10,7 +10,34 @@ apply to you with someone qualified.
 - Processes face images only in memory, on the device, and does not store or log them.
 - Stores one face template (192 numbers) per enrolled person, an ID you choose,
   and queued attendance records, in an encrypted database on the device.
-- Never sends anything over the network. Uploading records is up to your app.
+- Makes no network calls. Uploading records is up to your app.
+
+## The example app and ML Kit
+
+The example app is not the SDK. It uses Google ML Kit face detection (through
+`react-native-vision-camera-face-detector`) for the live face box and the
+liveness challenges. ML Kit processes images on the device and, according to
+Google's [ML Kit data disclosure](https://developers.google.com/ml-kit/android-data-disclosure),
+does not send images. It does send usage and performance metrics to Google:
+device and app information, a per-installation identifier, latency, API
+configuration and error codes. On the phone they wait in a local queue, the
+database `com.google.android.datatransport.events`, and are uploaded when the
+phone is online.
+
+Google documents no setting to turn this off. If your app must not contact
+Google:
+
+- Do not use ML Kit. The SDK finds faces itself with BlazeFace on Android when
+  no face box is passed (the example app's "Crop with ML Kit face box" switch,
+  turned off). The liveness challenges still need a detector that reports eye,
+  smile and head-pose values; ML Kit is only one choice.
+- Or ship without the `INTERNET` permission if your app has no other network use;
+  the queue then stays on the phone. The example app keeps the permission for its
+  optional Sync screen.
+
+Tell your users about ML Kit's metrics if you use it; Google's
+[ML Kit terms](https://developers.google.com/ml-kit/terms) make that your
+responsibility.
 
 ## What your app is responsible for
 

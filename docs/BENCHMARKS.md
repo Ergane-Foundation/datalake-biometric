@@ -20,10 +20,39 @@ the photo capture in JavaScript).
 | Version | Device | OS | inferenceMs | totalMs |
 |---------|--------|----|-------------|---------|
 | 0.1.0 | Samsung Galaxy A17 (SM-A176B), Exynos 1330 | Android 14 | 28 to 33 ms | 413 to 576 ms |
-| 0.2.0 | (none yet) | | not yet measured | not yet measured |
+| 0.2.0 | Samsung Galaxy A17 (SM-A176B) | Android 16 | 34 ms (one verification) | 196 ms (one verification) |
 
 Version 0.1.0 used a different pipeline (TensorFlow Lite 2.13, no alignment), so
-its numbers do not describe the current code.
+its numbers do not describe the current code. The 0.2.0 row is a single
+verification on a release build; see the device test below.
+
+## Device test: 0.2.0 on a Galaxy A17, release build
+
+Single person, small sample. Not a benchmark: it shows the app works end to end
+on one phone, and where it needs more testing.
+
+- Device: Samsung Galaxy A17 (SM-A176B), Android 16, airplane mode on.
+- Build: release APK from the "Release APK (test only, debug-signed)" workflow,
+  ML Kit face box on.
+- Light: dim indoor.
+
+| Check | Result |
+|-------|--------|
+| Enroll one person | OK |
+| 10 verifications of the enrolled person | 2 of 10 returned `MATCH` |
+| Example `MATCH` | similarity 0.889, inferenceMs 34, totalMs 196, quality 0.50 |
+| Same check on a debug build, for reference | similarity 0.968, inferenceMs 69, totalMs 329, quality 0.53 |
+| Photos left on disk after enroll and verify | none (no `.jpg` or `.jpeg` in app storage) |
+| Database encrypted | yes (first 16 bytes are random, not `SQLite format 3`) |
+| People who are not enrolled are rejected | not yet verified on a device |
+| Liveness against printed photos, screens, video | not yet verified on a device |
+| Several faces, poor light, app restart | not yet verified on a device |
+
+The other 8 verifications were not recorded by status, so it is not known how
+many were `POOR_QUALITY` (quality below 0.5, likely in dim light) and how many
+were `NO_MATCH`. The quality of the example `MATCH` is right at the 0.5 cutoff.
+Quality is a continuous score from 0 to 1 (not rounded or clamped except to that
+range); the app shows it with two decimals.
 
 To contribute a measurement: build the example app in release mode, enroll one
 person, run 10 verifications in normal indoor light, and report the median and
@@ -122,8 +151,9 @@ threshold.
 
 Not formally evaluated. The liveness check is active challenge-response only: two
 random actions out of blink, smile and head turn, each of which must start from
-the opposite pose. That defeats static photos. It does not defend against video
-replays, deepfakes or masks.
+the opposite pose. It is designed to stop static photos; that has not yet been
+verified on a device. It does not defend against video replays, deepfakes or
+masks.
 
 ## Storage
 
