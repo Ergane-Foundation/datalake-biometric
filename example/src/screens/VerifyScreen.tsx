@@ -20,7 +20,7 @@ import {
   type LivenessChallenge,
   type LivenessState,
   type VerifyResult,
-} from 'datalake-biometric';
+} from 'faceproof';
 import { FaceCamera } from '../FaceCamera';
 import { useFaceObservations, takePhotoBase64 } from '../camera';
 import { useTheme, type ThemeColors } from '../ThemeContext';

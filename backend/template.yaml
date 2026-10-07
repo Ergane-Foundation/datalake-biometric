@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Optional, self-hosted sync backend for datalake-biometric: an HTTP API with a
+  Optional, self-hosted sync backend for faceproof: an HTTP API with a
   token authorizer, a Lambda that stores attendance records, and a DynamoDB
   table with a 90-day TTL. See backend/README.md before deploying.
 
 Parameters:
   SyncTokenParameterName:
     Type: String
-    Default: datalake-biometric/sync-token
+    Default: faceproof/sync-token
     Description: >
       SSM Parameter Store name (without the leading slash) of a SecureString
       holding the API token. Create it before deploying; see backend/README.md.

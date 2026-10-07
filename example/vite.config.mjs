@@ -17,7 +17,7 @@ export default defineConfig((env) =>
         // load a directory alias on Windows.
         { find: new RegExp(`^${pack.name}$`), replacement: local('../src/index.tsx') },
         // react-native-web has no TurboModuleRegistry.
-        { find: /^\.\/NativeDatalakeBiometric$/, replacement: local('./web-stubs-native-module.js') },
+        { find: /^\.\/NativeFaceproof$/, replacement: local('./web-stubs-native-module.js') },
         { find: 'react-native-vision-camera-face-detector', replacement: webStub },
         { find: 'react-native-vision-camera', replacement: webStub },
         { find: 'react-native-worklets-core', replacement: webStub },

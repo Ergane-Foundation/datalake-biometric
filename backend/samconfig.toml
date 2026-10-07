@@ -1,7 +1,7 @@
 version = 0.1
 
 [default.deploy.parameters]
-stack_name        = "datalake-biometric"
+stack_name        = "faceproof"
 region            = "ap-south-1"
 resolve_s3        = true                      # SAM auto-creates the artifact bucket
 capabilities      = "CAPABILITY_IAM"

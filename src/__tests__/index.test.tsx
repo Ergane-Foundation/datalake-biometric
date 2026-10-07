@@ -9,7 +9,7 @@ const mockNative = {
   getSecureRandomBytes: jest.fn(async (_count: number) => [0, 1, 2]),
 };
 
-jest.mock('../NativeDatalakeBiometric', () => ({
+jest.mock('../NativeFaceproof', () => ({
   __esModule: true,
   default: mockNative,
 }));

@@ -4,7 +4,7 @@ import { useFrameProcessor, type Camera } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { useRunOnJS } from 'react-native-worklets-core';
 import ReactNativeBlobUtil from 'react-native-blob-util';
-import type { FaceBox, FaceObservation } from 'datalake-biometric';
+import type { FaceBox, FaceObservation } from 'faceproof';
 import { readPhotoAndDelete } from './photoFile';
 
 /**

@@ -14,11 +14,9 @@ versions may contain breaking changes.
 - `logAttendance(workerId, confidence, location?)` replaces
   `logAttendance(workerId, latitude, longitude, confidence)`. The location is
   optional; records without one have no `latitude` and `longitude`.
-- Existing installs are reset once on upgrade: the old key store and the database
-  it protected are deleted, because the new key handling cannot read the old
-  keys. Enroll everyone again after upgrading.
 - Face templates from 0.1.0 are not comparable with 0.2.0 templates (faces are
-  now aligned before embedding). This is covered by the reset above.
+  now aligned before embedding), and 0.2.0 cannot read the 0.1.0 key store.
+  Clear the app's data, or reinstall it, and enroll everyone again.
 - License changed from MIT to Apache-2.0.
 - The model file is now `mobilefacenet.tflite` (it was wrongly named
   `mobilefacenet_int8.tflite`). Run `yarn setup:models`.

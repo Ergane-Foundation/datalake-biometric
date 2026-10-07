@@ -70,9 +70,7 @@ export default function MenuScreen({ navigate, initStatus }: Props) {
     >
       <View style={[s.row, { marginBottom: 16 }]}>
         <View style={{ flex: 1 }}>
-          <Text style={[s.title, { color: colors.text }]}>
-            Datalake Biometric
-          </Text>
+          <Text style={[s.title, { color: colors.text }]}>Faceproof</Text>
           <Text style={[s.subtitle, { color: colors.textDim }]}>
             Offline face recognition + liveness
           </Text>

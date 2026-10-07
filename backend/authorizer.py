@@ -7,7 +7,7 @@ token equals the SecureString stored in SSM Parameter Store. The token is never
 in the code, the template or the app's source; the app user types it in.
 
 Environment variables:
-  TOKEN_PARAMETER   Full SSM parameter name, for example /datalake-biometric/sync-token.
+  TOKEN_PARAMETER   Full SSM parameter name, for example /faceproof/sync-token.
 """
 
 import hmac

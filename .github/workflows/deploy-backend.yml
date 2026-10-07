@@ -16,7 +16,7 @@ concurrency:
 jobs:
   deploy:
     # Only the maintainer's repository deploys; in any fork this job is skipped.
-    if: github.repository == 'Ergane-Foundation/datalake-biometric'
+    if: github.repository == 'Ergane-Foundation/faceproof'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Smoke test (a request without a token must be refused)
         env:
-          STACK_NAME: datalake-biometric # must match stack_name in samconfig.toml
+          STACK_NAME: faceproof # must match stack_name in samconfig.toml
         run: |
           URL=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)

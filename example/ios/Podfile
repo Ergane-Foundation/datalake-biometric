@@ -16,7 +16,7 @@ end
 
 pod 'SQLCipher', :modular_headers => true
 
-target 'DatalakeBiometricExample' do
+target 'FaceproofExample' do
   config = use_native_modules!
 
   use_react_native!(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useState } from 'react';
 import { Platform, StatusBar, StyleSheet, View } from 'react-native';
-import { BiometricSDK, type VerifyResult } from 'datalake-biometric';
+import { BiometricSDK, type VerifyResult } from 'faceproof';
 import { ThemeProvider, useTheme } from './ThemeContext';
 import type { InitStatus, Screen } from './types';
 import MenuScreen from './screens/MenuScreen';
