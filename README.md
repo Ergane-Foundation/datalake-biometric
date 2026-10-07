@@ -18,7 +18,7 @@ Pre-release. Not yet published to npm.
 
 | Platform | Status |
 |----------|--------|
-| Android | Supported (API 24+). Tested on a physical device. |
+| Android | Supported (API 24+). Enrollment, verification, encryption and photo cleanup checked on one physical device; impostor rejection and liveness against spoofs not yet verified on a device. |
 | iOS | Experimental. Compiles in CI but is not tested on a device, and needs a Core ML model that is not included. |
 
 **iOS and Android templates are not comparable.** Android aligns each face before
@@ -36,8 +36,9 @@ likely an upper bound; see [Benchmarks](#benchmarks).
 - **Face embedding** with MobileFaceNet (192 values) and 1:N matching against
   everyone enrolled.
 - **Active liveness**: two random challenges out of blink, smile and head turn.
-  This is challenge-response only. It defeats static photos; it does not
-  defend against video replay, deepfakes or masks.
+  This is challenge-response only. It is designed to stop static photos (not yet
+  verified on a device); it does not defend against video replay, deepfakes or
+  masks.
 - **Encrypted storage**: SQLCipher (AES-256), keys protected by the Android Keystore.
 - **Offline attendance queue**: signed records, optional location, and an optional
   self-hosted [sync backend](backend/README.md) for AWS.
@@ -143,8 +144,11 @@ stored template. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Benchmarks
 
-- **Speed on phones** for version 0.2.0: not yet measured. Version 0.1.0 measured
-  28 to 33 ms model time on a Samsung Galaxy A17.
+- **On a phone (0.2.0, release build, Samsung Galaxy A17, one person, small
+  sample):** 2 of 10 verifications of the enrolled person returned `MATCH` in dim
+  indoor light. One example: similarity 0.889, model time 34 ms, total 196 ms,
+  quality 0.50. Impostor rejection and spoof resistance are not yet verified on a
+  device.
 - **Accuracy (LFW benchmark, likely an upper bound):** 99.28% 10-fold accuracy;
   at the default threshold 0.54, FAR 8.0e-5 per comparison and TAR 92.97%. 10.8%
   of images (19.6% of pairs) were excluded because a second face was visible.
@@ -165,8 +169,14 @@ Method, numbers and caveats: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Privacy and security
 
-The SDK never makes network requests and never stores images. Templates are still
+The SDK makes no network calls and never stores images. Templates are still
 biometric data, and you remain responsible for consent and retention.
+
+The example app is different: its face detector is Google ML Kit, which keeps a
+local queue of usage logs (`com.google.android.datatransport.events`) and sends
+them to Google when the phone is online. Google states these are API usage and
+performance metrics, not images. Details and options:
+[docs/PRIVACY.md](docs/PRIVACY.md#the-example-app-and-ml-kit).
 
 - [docs/PRIVACY.md](docs/PRIVACY.md): notes for app developers (not legal advice)
 - [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md): what is protected, and the limits

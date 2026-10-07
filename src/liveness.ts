@@ -9,8 +9,9 @@ import type { RandomInt } from './random';
  * ML Kit through `react-native-vision-camera-face-detector`, as the example
  * app does).
  *
- * This is active challenge-response only. It defeats static photos, printed or
- * on a screen, because a still image cannot change pose on request. It does
+ * This is active challenge-response only. It is designed to stop static photos,
+ * printed or on a screen, because a still image cannot change pose on request
+ * (not yet verified on a device). It does
  * NOT defend against video replays, deepfakes or masks, and it is not
  * certified presentation attack detection.
  */

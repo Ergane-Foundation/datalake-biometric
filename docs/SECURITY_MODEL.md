@@ -80,7 +80,8 @@ The reference backend (`backend/`) is optional and runs in your own AWS account.
 
 The liveness check is **active challenge-response only**: the person must
 perform two random actions (blink, smile, head turn), each starting from the
-opposite pose. This defeats static photos, printed or on a screen.
+opposite pose. This is designed to stop static photos, printed or on a screen;
+that has not yet been verified on a device.
 
 It does **not** defend against:
 

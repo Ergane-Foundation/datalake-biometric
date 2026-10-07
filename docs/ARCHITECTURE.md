@@ -43,9 +43,9 @@ secure random bytes come from the native side: `SecureRandom` on Android and
 
 ## Liveness
 
-The liveness check is **active challenge-response only**. It defeats static
-photos (printed or on a screen), because a still image cannot change pose on
-request. It does **not** defend against video replays, deepfakes or masks. There
+The liveness check is **active challenge-response only**. It is designed to stop
+static photos (printed or on a screen), because a still image cannot change pose
+on request; this has not yet been verified on a device. It does **not** defend against video replays, deepfakes or masks. There
 is no passive anti-spoofing (texture or depth analysis) yet.
 
 The session lives in JavaScript so it works with any face detector that reports

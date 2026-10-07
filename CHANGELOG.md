@@ -31,8 +31,9 @@ versions may contain breaking changes.
   `MULTIPLE_FACES` status when several faces are visible.
 - Liveness session in the SDK (`createLivenessState`, `updateLiveness`,
   `pickChallenges`, `expireLiveness`): two random challenges, start-pose checks,
-  multi-face rejection, timeout. Active challenge-response only: it defeats static
-  photos but not video replay, deepfakes or masks.
+  multi-face rejection, timeout. Active challenge-response only: designed to stop
+  static photos (not yet verified on a device), not video replay, deepfakes or
+  masks.
 - `BiometricSDK.createSecureRandomInt()` and the native `getSecureRandomBytes`,
   because React Native has no `crypto.getRandomValues`.
 - `initialize({ matchThreshold, minQuality })`.
