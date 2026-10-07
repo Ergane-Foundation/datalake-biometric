@@ -57,6 +57,11 @@ yarn setup            # download and verify the models, create a debug keystore
 yarn example android  # with a phone connected over USB
 ```
 
+To try it without a build setup, maintainers can run the "Release APK (test
+only, debug-signed)" workflow in the Actions tab; it uploads an
+`example-release-apk` artifact for arm64 phones. It is a test build signed
+with a throwaway debug key, not a published release.
+
 ## Models
 
 The models are not stored in git. `yarn setup:models` downloads them and checks
