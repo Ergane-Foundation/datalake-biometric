@@ -48,6 +48,21 @@ yarn example ios        # macOS; run `cd example/ios && pod install` first
 Face features need a real camera; an emulator only checks that the app starts.
 Changes in `src/` reload in the app; changes in `android/` or `ios/` need a rebuild.
 
+### Windows: release builds and long paths
+
+Debug builds work from any folder, but a local release build
+(`assembleRelease`) can fail on Windows with
+`ninja: error: manifest 'build.ninja' still dirty after 100 tries` in a
+native dependency. The CMake build paths get too long for Windows. Clone
+the repository to a short path, for example `C:\src\dlb`, and build there.
+Mapping a short drive letter with `subst` does not help, because the build
+resolves the real path.
+
+To get a release APK without building locally, run the "Release APK (test
+only, debug-signed)" workflow from the Actions tab of your fork and download
+the `example-release-apk` artifact. It is signed with a throwaway debug key,
+so use it for testing only.
+
 ## Checks
 
 Run these before opening a pull request. CI runs the same ones.
