@@ -7168,7 +7168,7 @@ __metadata:
     react-native-builder-bob: "npm:^0.41.0"
     react-native-monorepo-config: "npm:^0.3.3"
     react-native-vision-camera: "npm:^4.7.0"
-    react-native-vision-camera-face-detector: "npm:^1.7.0"
+    react-native-vision-camera-face-detector: "npm:^2.1.0"
     react-native-web: "npm:~0.21.3"
     react-native-worklets-core: "npm:^1.6.0"
     react-test-renderer: "npm:19.2.3"
@@ -12010,14 +12010,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-native-vision-camera-face-detector@npm:^1.7.0":
-  version: 1.10.2
-  resolution: "react-native-vision-camera-face-detector@npm:1.10.2"
+"react-native-vision-camera-face-detector@npm:^2.1.0":
+  version: 2.1.0
+  resolution: "react-native-vision-camera-face-detector@npm:2.1.0"
   peerDependencies:
     react: ">= 18"
     react-native: ">= 0.74"
-    react-native-vision-camera: ">= 4.0"
-  checksum: 10c0/86af4164dcfba6a86af19e84b32ee10715b42b4e86327dc3f32ee6731eaf944732911032a6015bdcc02712c664e4fdac2041d9b0aeb0f016c884da7ddf0bae66
+    react-native-nitro-modules: ">= 0.35"
+    react-native-vision-camera: ">= 5.0.10"
+  checksum: 10c0/a19e4fc0d47ed3f131a5fb1f30b38c40ef33cc34a897ec0bd1b694cb261da77c0f9dc500e803b190734cd9a71c7d7ca0140f7b13fb497bb3beeec25cef6b4a95
   languageName: node
   linkType: hard
 

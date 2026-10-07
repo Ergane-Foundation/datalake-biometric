@@ -21,7 +21,7 @@
     "react-native": "0.85.3",
     "react-native-blob-util": "^0.24.9",
     "react-native-vision-camera": "^4.7.0",
-    "react-native-vision-camera-face-detector": "^1.7.0",
+    "react-native-vision-camera-face-detector": "^2.1.0",
     "react-native-web": "~0.21.3",
     "react-native-worklets-core": "^1.6.0"
   },
