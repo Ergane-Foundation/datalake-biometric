@@ -5228,10 +5228,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"base-64@npm:0.1.0":
-  version: 0.1.0
-  resolution: "base-64@npm:0.1.0"
-  checksum: 10c0/fe0dcf076e823f04db7ee9b02495be08a91c445fbc6db03cb9913be9680e2fcc0af8b74459041fe08ad16800b1f65a549501d8f08696a8a6d32880789b7de69d
+"base-64@npm:1.0.0":
+  version: 1.0.0
+  resolution: "base-64@npm:1.0.0"
+  checksum: 10c0/d886cb3236cee0bed9f7075675748b59b32fad623ddb8ce1793c790306aa0f76a03238cad4b3fb398abda6527ce08a5588388533a4ccade0b97e82b9da660e28
   languageName: node
   linkType: hard
 
@@ -7164,7 +7164,7 @@ __metadata:
     react: "npm:19.2.3"
     react-dom: "npm:19.2.3"
     react-native: "npm:0.85.3"
-    react-native-blob-util: "npm:^0.24.9"
+    react-native-blob-util: "npm:^0.24.12"
     react-native-builder-bob: "npm:^0.41.0"
     react-native-monorepo-config: "npm:^0.3.3"
     react-native-vision-camera: "npm:^4.7.0"
@@ -7711,17 +7711,6 @@ __metadata:
   dependencies:
     is-glob: "npm:^4.0.3"
   checksum: 10c0/317034d88654730230b3f43bb7ad4f7c90257a426e872ea0bf157473ac61c99bf5d205fad8f0185f989be8d2fa6d3c7dce1645d99d545b6ea9089c39f838e7f8
-  languageName: node
-  linkType: hard
-
-"glob@npm:13.0.1":
-  version: 13.0.1
-  resolution: "glob@npm:13.0.1"
-  dependencies:
-    minimatch: "npm:^10.1.2"
-    minipass: "npm:^7.1.2"
-    path-scurry: "npm:^2.0.0"
-  checksum: 10c0/af7b863dec8dff74f61d7d6e53104e1f6bbdd482157a196cade8ed857481e876ec35181b38a059b2a7b93ea3b08248f4ff0792fef6dc91814fd5097a716f48e4
   languageName: node
   linkType: hard
 
@@ -10853,7 +10842,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"minimatch@npm:^10.1.2, minimatch@npm:^10.2.2":
+"minimatch@npm:^10.2.2":
   version: 10.2.5
   resolution: "minimatch@npm:10.2.5"
   dependencies:
@@ -11589,7 +11578,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"path-scurry@npm:^2.0.0, path-scurry@npm:^2.0.2":
+"path-scurry@npm:^2.0.2":
   version: 2.0.2
   resolution: "path-scurry@npm:2.0.2"
   dependencies:
@@ -11955,16 +11944,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-native-blob-util@npm:^0.24.9":
-  version: 0.24.9
-  resolution: "react-native-blob-util@npm:0.24.9"
+"react-native-blob-util@npm:^0.24.12":
+  version: 0.24.12
+  resolution: "react-native-blob-util@npm:0.24.12"
   dependencies:
-    base-64: "npm:0.1.0"
-    glob: "npm:13.0.1"
+    base-64: "npm:1.0.0"
   peerDependencies:
     react: "*"
     react-native: "*"
-  checksum: 10c0/5ad5f101dcf618218dba35897787a3bbb198bdd0788623411a30676a7023a49c41abdeb260ca4fb07e056cf1d40ee12e78e7ceaac62a6c6794c206a399d1bc52
+  checksum: 10c0/925da8f07874c7367dfe0849423c96e58d0f7e643918fe90f7083a11c3bc7541bceeb748994c60ccca746adfc0127408703e68593cfe342660ab8a505ad58790
   languageName: node
   linkType: hard
 
