@@ -127,6 +127,15 @@ await BiometricSDK.purgeSyncedRecords();
 The [example app](example/) shows the complete flow with Vision Camera and ML Kit,
 including deleting the camera's temporary photo file right after use.
 
+Tips for reliable results:
+
+- Verify in even light from the front. In dim light most photos fail the quality
+  check (`POOR_QUALITY`); ask the person to move to better light and try again.
+- Pass the face box from your camera's face detector (for example ML Kit) when you
+  have one. On Android it selects which face to use and made verification faster
+  in our test (median 147 ms against 237 ms without a box). See
+  [docs/BENCHMARKS.md](docs/BENCHMARKS.md#device-test-020-on-a-galaxy-a17-release-build).
+
 ## Configuration
 
 | Option | Default | Meaning |
@@ -145,10 +154,17 @@ stored template. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Benchmarks
 
 - **On a phone (0.2.0, release build, Samsung Galaxy A17, one person, small
-  sample):** 2 of 10 verifications of the enrolled person returned `MATCH` in dim
-  indoor light. One example: similarity 0.889, model time 34 ms, total 196 ms,
-  quality 0.50. Impostor rejection and spoof resistance are not yet verified on a
-  device.
+  sample):**
+
+  | Light | ML Kit box | Result | Median model time | Median total |
+  |-------|------------|--------|-------------------|--------------|
+  | Even front light | on | 5 of 5 `MATCH` | 29 ms | 147 ms |
+  | Even front light | off | 4 of 5 `MATCH` | 48 ms | 237 ms |
+  | Dim indoor | on | 2 of 10 `MATCH` | | |
+
+  Dim light fails the quality gate: frames score below the 0.5 cutoff and are
+  rejected as `POOR_QUALITY` before matching. Impostor rejection and spoof
+  resistance are not yet verified on a device.
 - **Accuracy (LFW benchmark, likely an upper bound):** 99.28% 10-fold accuracy;
   at the default threshold 0.54, FAR 8.0e-5 per comparison and TAR 92.97%. 10.8%
   of images (19.6% of pairs) were excluded because a second face was visible.

@@ -20,11 +20,13 @@ the photo capture in JavaScript).
 | Version | Device | OS | inferenceMs | totalMs |
 |---------|--------|----|-------------|---------|
 | 0.1.0 | Samsung Galaxy A17 (SM-A176B), Exynos 1330 | Android 14 | 28 to 33 ms | 413 to 576 ms |
-| 0.2.0 | Samsung Galaxy A17 (SM-A176B) | Android 16 | 34 ms (one verification) | 196 ms (one verification) |
+| 0.2.0, ML Kit box passed | Samsung Galaxy A17 (SM-A176B) | Android 16 | median 29 ms (28 to 34, 5 runs) | median 147 ms (136 to 169, 5 runs) |
+| 0.2.0, no box (BlazeFace on the whole frame) | Samsung Galaxy A17 (SM-A176B) | Android 16 | median 48 ms (31 to 82, 5 runs) | median 237 ms (171 to 287, 5 runs) |
 
 Version 0.1.0 used a different pipeline (TensorFlow Lite 2.13, no alignment), so
-its numbers do not describe the current code. The 0.2.0 row is a single
-verification on a release build; see the device test below.
+its numbers do not describe the current code. The 0.2.0 rows are from the
+good-light device test below (release build). Passing the face box is faster
+because BlazeFace then only searches a small area around it.
 
 ## Device test: 0.2.0 on a Galaxy A17, release build
 
@@ -32,9 +34,33 @@ Single person, small sample. Not a benchmark: it shows the app works end to end
 on one phone, and where it needs more testing.
 
 - Device: Samsung Galaxy A17 (SM-A176B), Android 16, airplane mode on.
-- Build: release APK from the "Release APK (test only, debug-signed)" workflow,
-  ML Kit face box on.
-- Light: dim indoor.
+- Build: release APK from the "Release APK (test only, debug-signed)" workflow.
+
+**Dim light fails the quality gate.** In dim light the frames score below the
+`minQuality` cutoff of 0.5 and return `POOR_QUALITY` before any matching. In
+even front light the same person matched in 9 of 10 attempts.
+
+### Good front light (person wearing glasses)
+
+| ML Kit box | Status | Similarity | Quality | inferenceMs | totalMs |
+|------------|--------|------------|---------|-------------|---------|
+| on | `MATCH` | 0.826 | 0.74 | 34 | 159 |
+| on | `MATCH` | 0.962 | 0.78 | 28 | 147 |
+| on | `MATCH` | 0.876 | 0.78 | 29 | 136 |
+| on | `MATCH` | 0.893 | 0.81 | 29 | 140 |
+| on | `MATCH` | 0.799 | 0.80 | 34 | 169 |
+| off | `MATCH` | 0.962 | 0.79 | 42 | 240 |
+| off | `MATCH` | 0.915 | 0.80 | 31 | 171 |
+| off | `MATCH` (exaggerated pout) | 0.735 | 0.81 | 70 | 287 |
+| off | `NO_MATCH` (exaggerated pout and head tilt) | not returned | 0.70 | 82 | 237 |
+| off | `MATCH` | 0.916 | 0.80 | 48 | 231 |
+
+Result: 9 of 10 `MATCH` (5 of 5 with the box, 4 of 5 without). The one
+`NO_MATCH` reached the model (it has an inference time), so it was rejected by
+the match threshold, not by the quality gate. The SDK returns a similarity only
+for `MATCH`.
+
+### Dim indoor light (ML Kit box on)
 
 | Check | Result |
 |-------|--------|
@@ -48,11 +74,13 @@ on one phone, and where it needs more testing.
 | Liveness against printed photos, screens, video | not yet verified on a device |
 | Several faces, poor light, app restart | not yet verified on a device |
 
-The other 8 verifications were not recorded by status, so it is not known how
-many were `POOR_QUALITY` (quality below 0.5, likely in dim light) and how many
-were `NO_MATCH`. The quality of the example `MATCH` is right at the 0.5 cutoff.
-Quality is a continuous score from 0 to 1 (not rounded or clamped except to that
-range); the app shows it with two decimals.
+The statuses of the other 8 dim-light verifications were not recorded. The two
+that passed had quality 0.50 and 0.53, right at the 0.5 cutoff, while every
+good-light frame scored 0.70 to 0.81; with similarity 0.889 the match itself was
+clear. Quality is a continuous score from 0 to 1 (not rounded or clamped except
+to that range); the app shows it with two decimals. The score is computed on the
+whole frame, so a dark background lowers it even when the face is lit; scoring
+the aligned face instead is an open issue.
 
 To contribute a measurement: build the example app in release mode, enroll one
 person, run 10 verifications in normal indoor light, and report the median and
