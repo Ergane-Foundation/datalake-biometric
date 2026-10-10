@@ -2,10 +2,10 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTheme, type ThemeMode } from './ThemeContext';
 
-const BUTTONS: { mode: ThemeMode; label: string }[] = [
-  { mode: 'light', label: '☀️' },
-  { mode: 'dark', label: '🌙' },
-  { mode: 'auto', label: '🔄' },
+const BUTTONS: { mode: ThemeMode; label: string; name: string }[] = [
+  { mode: 'light', label: '☀️', name: 'Light theme' },
+  { mode: 'dark', label: '🌙', name: 'Dark theme' },
+  { mode: 'auto', label: '🔄', name: 'System theme' },
 ];
 
 export function ThemeToggle() {
@@ -20,6 +20,10 @@ export function ThemeToggle() {
             key={btn.mode}
             activeOpacity={0.75}
             onPress={() => setMode(btn.mode)}
+            // The visible label is an emoji, so the name has to be spelled out.
+            accessibilityRole="button"
+            accessibilityLabel={btn.name}
+            accessibilityState={{ selected: active }}
             style={[
               styles.button,
               {

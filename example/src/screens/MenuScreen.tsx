@@ -85,6 +85,7 @@ export default function MenuScreen({ navigate, initStatus }: Props) {
         <TouchableOpacity
           key={it.key}
           activeOpacity={0.8}
+          accessibilityRole="button"
           style={[
             s.card,
             {
