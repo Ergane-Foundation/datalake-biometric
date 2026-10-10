@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { Platform, StatusBar, StyleSheet, View } from 'react-native';
 import { BiometricSDK, type VerifyResult } from 'faceproof';
 import { ThemeProvider, useTheme } from './ThemeContext';
-import type { InitStatus, Screen } from './types';
+import type { InitError, InitStatus, Screen } from './types';
 import MenuScreen from './screens/MenuScreen';
 import EnrollScreen from './screens/EnrollScreen';
 import VerifyScreen from './screens/VerifyScreen';
@@ -14,13 +14,18 @@ function AppInner() {
   const { isDark, colors } = useTheme();
   const [screen, setScreen] = useState<Screen>('menu');
   const [initStatus, setInitStatus] = useState<InitStatus>('pending');
+  const [initError, setInitError] = useState<InitError | null>(null);
   const [lastVerify, setLastVerify] = useState<VerifyResult | null>(null);
 
   useEffect(() => {
     let mounted = true;
     BiometricSDK.initialize()
       .then((ok) => mounted && setInitStatus(ok ? 'ready' : 'failed'))
-      .catch(() => mounted && setInitStatus('failed'));
+      .catch((e: any) => {
+        if (!mounted) return;
+        setInitStatus('failed');
+        setInitError({ code: e?.code, message: e?.message });
+      });
     return () => {
       mounted = false;
     };
@@ -35,7 +40,11 @@ function AppInner() {
         backgroundColor={colors.bg}
       />
       {screen === 'menu' && (
-        <MenuScreen navigate={navigate} initStatus={initStatus} />
+        <MenuScreen
+          navigate={navigate}
+          initStatus={initStatus}
+          initError={initError}
+        />
       )}
       {screen === 'enroll' && (
         <EnrollScreen navigate={navigate} isActive={screen === 'enroll'} />

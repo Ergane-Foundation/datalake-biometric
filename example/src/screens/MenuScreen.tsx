@@ -8,11 +8,18 @@ import {
 } from 'react-native';
 import { useTheme } from '../ThemeContext';
 import { ThemeToggle } from '../ThemeToggle';
-import type { InitStatus, Screen } from '../types';
+import type { InitError, InitStatus, Screen } from '../types';
 
 type Props = {
   navigate: (screen: Screen) => void;
   initStatus: InitStatus;
+  initError?: InitError | null;
+};
+
+// Short, actionable fix for the codes a new contributor is most likely to hit.
+// See docs/ARCHITECTURE.md for the full table.
+const INIT_HINTS: Record<string, string> = {
+  MODEL_NOT_FOUND: 'Run yarn setup:models and rebuild',
 };
 
 const ITEMS: { key: Screen; title: string; body: string; emoji: string }[] = [
@@ -60,8 +67,9 @@ function StatusPill({ status }: { status: InitStatus }) {
   );
 }
 
-export default function MenuScreen({ navigate, initStatus }: Props) {
+export default function MenuScreen({ navigate, initStatus, initError }: Props) {
   const { colors } = useTheme();
+  const hint = initError?.code ? INIT_HINTS[initError.code] : undefined;
 
   return (
     <ScrollView
@@ -78,8 +86,34 @@ export default function MenuScreen({ navigate, initStatus }: Props) {
         <View style={{ alignItems: 'flex-end', gap: 8 }}>
           <ThemeToggle />
           <StatusPill status={initStatus} />
+          {initStatus === 'failed' && initError?.code && (
+            <Text
+              style={[s.errorCode, { color: colors.danger }]}
+              accessibilityLabel={`Initialization error: ${initError.code}`}
+            >
+              {initError.code}
+            </Text>
+          )}
         </View>
       </View>
+
+      {initStatus === 'failed' && (hint || initError?.message) && (
+        <View
+          style={[
+            s.errorBanner,
+            { backgroundColor: colors.cardBg, borderColor: colors.danger },
+          ]}
+        >
+          {hint && (
+            <Text style={[s.errorHint, { color: colors.text }]}>{hint}</Text>
+          )}
+          {initError?.message && (
+            <Text style={[s.errorMessage, { color: colors.textDim }]}>
+              {initError.message}
+            </Text>
+          )}
+        </View>
+      )}
 
       {ITEMS.map((it) => (
         <TouchableOpacity
@@ -157,5 +191,25 @@ const s = StyleSheet.create({
   pillText: {
     fontWeight: '700',
     fontSize: 13,
+  },
+  errorCode: {
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  errorBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorHint: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  errorMessage: {
+    fontSize: 12,
+    lineHeight: 17,
   },
 });
