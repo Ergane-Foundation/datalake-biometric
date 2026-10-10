@@ -60,6 +60,49 @@ describe('MenuScreen', () => {
     });
     expect(screen.getByText(/Init Failed/)).toBeTruthy();
   });
+
+  it('shows the error code and the model setup hint when initialize rejects', () => {
+    render(
+      <MenuScreen
+        navigate={jest.fn()}
+        initStatus="failed"
+        initError={{
+          code: 'MODEL_NOT_FOUND',
+          message: 'detector.tflite is missing',
+        }}
+      />,
+      { wrapper: Wrapper }
+    );
+    expect(screen.getByText('MODEL_NOT_FOUND')).toBeTruthy();
+    expect(screen.getByText('Run yarn setup:models and rebuild')).toBeTruthy();
+    expect(screen.getByText('detector.tflite is missing')).toBeTruthy();
+  });
+
+  it('shows the message without a hint for an unmapped code', () => {
+    render(
+      <MenuScreen
+        navigate={jest.fn()}
+        initStatus="failed"
+        initError={{ code: 'NATIVE_ERROR', message: 'interpreter closed' }}
+      />,
+      { wrapper: Wrapper }
+    );
+    expect(screen.getByText('NATIVE_ERROR')).toBeTruthy();
+    expect(screen.getByText('interpreter closed')).toBeTruthy();
+    expect(screen.queryByText(/yarn setup:models/)).toBeNull();
+  });
+
+  it('shows no error details while initialization has not failed', () => {
+    render(
+      <MenuScreen
+        navigate={jest.fn()}
+        initStatus="pending"
+        initError={{ code: 'MODEL_NOT_FOUND' }}
+      />,
+      { wrapper: Wrapper }
+    );
+    expect(screen.queryByText('MODEL_NOT_FOUND')).toBeNull();
+  });
 });
 
 describe('EnrollScreen', () => {
