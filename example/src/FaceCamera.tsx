@@ -77,7 +77,11 @@ export const FaceCamera = forwardRef<Camera, Props>(function FaceCamera(
     return (
       <View style={[s.card, { alignItems: 'center' }]}>
         <Text style={s.cardBody}>Camera permission is required.</Text>
-        <TouchableOpacity style={s.button} onPress={ask}>
+        <TouchableOpacity
+          style={s.button}
+          accessibilityRole="button"
+          onPress={ask}
+        >
           <Text style={s.buttonText}>Grant camera access</Text>
         </TouchableOpacity>
       </View>

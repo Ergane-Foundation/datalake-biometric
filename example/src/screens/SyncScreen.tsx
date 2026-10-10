@@ -136,6 +136,10 @@ export default function SyncScreen({ navigate }: Props) {
     },
   ];
 
+  // Uploading must need a configured endpoint, a token and at least one
+  // record, and must not start twice while a sync is already running.
+  const canSync = configured && records.length > 0 && !syncing;
+
   return (
     <ScrollView
       style={[s.screen, { backgroundColor: colors.bg }]}
@@ -225,7 +229,9 @@ export default function SyncScreen({ navigate }: Props) {
           { backgroundColor: colors.primary },
           (!configured || records.length === 0) && { opacity: 0.4 },
         ]}
-        disabled={!configured || records.length === 0 || syncing}
+        disabled={!canSync}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !canSync }}
         onPress={() => syncRecords(records)}
       >
         <Text style={s.buttonText}>
@@ -239,6 +245,7 @@ export default function SyncScreen({ navigate }: Props) {
 
       <TouchableOpacity
         style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
+        accessibilityRole="button"
         onPress={refresh}
       >
         <Text style={[s.buttonText, { color: colors.text }]}>Refresh</Text>
@@ -246,6 +253,7 @@ export default function SyncScreen({ navigate }: Props) {
 
       <TouchableOpacity
         style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
+        accessibilityRole="button"
         onPress={() => navigate('menu')}
       >
         <Text style={[s.buttonText, { color: colors.text }]}>Back to menu</Text>

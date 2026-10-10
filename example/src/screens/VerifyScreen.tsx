@@ -159,6 +159,9 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
           value={useFaceBox}
           onValueChange={setUseFaceBox}
           disabled={phase === 'verifying'}
+          // The description is a sibling Text, not a label, so the switch needs
+          // its own name for a screen reader.
+          accessibilityLabel="Crop with ML Kit face box"
         />
       </View>
 
@@ -222,6 +225,7 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
       {(phase === 'result' || phase === 'failed') && (
         <TouchableOpacity
           style={[s.button, { backgroundColor: colors.primary }]}
+          accessibilityRole="button"
           onPress={startSession}
         >
           <Text style={s.buttonText}>Try again</Text>
@@ -230,6 +234,7 @@ export default function VerifyScreen({ navigate, isActive, onResult }: Props) {
 
       <TouchableOpacity
         style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
+        accessibilityRole="button"
         onPress={() => navigate('menu')}
       >
         <Text style={[s.buttonText, { color: colors.text }]}>Back to menu</Text>

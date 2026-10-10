@@ -133,6 +133,8 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
               s.button,
               { backgroundColor: colors.primary, marginTop: 12 },
             ]}
+            accessibilityRole="button"
+            accessibilityLabel="Got it, dismiss this note"
             onPress={dismissFirstLaunchNote}
           >
             <Text style={s.buttonText}>Got it</Text>
@@ -213,6 +215,7 @@ export default function EnrollScreen({ navigate, isActive }: Props) {
 
       <TouchableOpacity
         style={[s.button, s.buttonGhost, { borderColor: colors.border }]}
+        accessibilityRole="button"
         onPress={() => navigate('menu')}
       >
         <Text style={[s.buttonText, { color: colors.text }]}>Back to menu</Text>
